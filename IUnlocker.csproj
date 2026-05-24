@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>iUnlocker</AssemblyName>
+    <TargetName>iUnlocker</TargetName>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <AssemblyTitle>iUnlocker</AssemblyTitle>
+    <Product>iUnlocker</Product>
+    <Description>iUnlocker</Description>
+    <Authors>MrGamer4814</Authors>
+    <Company>MrGamer4814</Company>
+    <Copyright>MrGamer4814</Copyright>
+  </PropertyGroup>
+
+</Project>

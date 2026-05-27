@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace IUnlocker;
 
 static class Program
@@ -10,6 +12,7 @@ static class Program
     {
         // To customize application configuration such as set high DPI settings or default font,
         // see https://aka.ms/applicationconfiguration.
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         ApplicationConfiguration.Initialize();
         Application.SetDefaultFont(AppFonts.Create(9F));
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

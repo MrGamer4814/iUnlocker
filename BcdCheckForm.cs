@@ -8,7 +8,9 @@ public sealed class BcdCheckForm : Form
     private readonly Label _statusLabel = new();
     private readonly Button _refreshButton = new();
     private readonly Button _copyButton = new();
+    private readonly CheckBox _showTechnicalBox = new();
 
+    private IReadOnlyList<BcdEntry> _allEntries = [];
     private string _rawOutput = string.Empty;
 
     public BcdCheckForm(AppSession session)
@@ -62,20 +64,27 @@ public sealed class BcdCheckForm : Form
             }
         };
         UiTheme.StyleButton(_copyButton);
+
+        _showTechnicalBox.Text = "Показать служебные записи";
+        _showTechnicalBox.AutoSize = true;
+        _showTechnicalBox.Margin = new Padding(12, 5, 0, 0);
+        _showTechnicalBox.CheckedChanged += (_, _) => ApplyEntryFilter();
+
         toolbar.Controls.Add(_refreshButton);
         toolbar.Controls.Add(_copyButton);
+        toolbar.Controls.Add(_showTechnicalBox);
 
         _entries.Dock = DockStyle.Fill;
         _entries.View = View.Details;
         _entries.FullRowSelect = true;
         _entries.HideSelection = false;
-        _entries.Columns.Add("Идентификатор", 160);
-        _entries.Columns.Add("Описание", 250);
-        _entries.Columns.Add("Путь", 260);
-        _entries.Columns.Add("SafeBoot", 100);
-        _entries.Columns.Add("Test", 80);
-        _entries.Columns.Add("Recovery", 90);
-        _entries.Columns.Add("BootStatusPolicy", 160);
+        _entries.Columns.Add("Запись", 240);
+        _entries.Columns.Add("ID", 150);
+        _entries.Columns.Add("Файл", 300);
+        _entries.Columns.Add("Безопасный режим", 130);
+        _entries.Columns.Add("Тестовый режим", 120);
+        _entries.Columns.Add("Recovery", 100);
+        _entries.Columns.Add("Политика", 150);
         _entries.SelectedIndexChanged += (_, _) => ShowSelectedDetails();
         UiTheme.StyleListView(_entries);
 
@@ -112,29 +121,8 @@ public sealed class BcdCheckForm : Form
                     : result.Output.Trim());
             }
 
-            var entries = BcdUtility.ParseEntries(result.Output);
-            _entries.BeginUpdate();
-            _entries.Items.Clear();
-            foreach (var entry in entries)
-            {
-                var item = new ListViewItem(string.IsNullOrWhiteSpace(entry.Identifier) ? entry.Section : entry.Identifier);
-                item.SubItems.Add(entry.Description);
-                item.SubItems.Add(entry.Path);
-                item.SubItems.Add(entry.SafeBoot);
-                item.SubItems.Add(entry.TestSigning);
-                item.SubItems.Add(entry.RecoveryEnabled);
-                item.SubItems.Add(entry.BootStatusPolicy);
-                item.Tag = entry;
-
-                if (!string.IsNullOrWhiteSpace(entry.SafeBoot) ||
-                    entry.TestSigning.Equals("Yes", StringComparison.OrdinalIgnoreCase) ||
-                    entry.TestSigning.Equals("Да", StringComparison.OrdinalIgnoreCase))
-                {
-                    item.BackColor = Color.FromArgb(255, 248, 220);
-                }
-
-                _entries.Items.Add(item);
-            }
+            _allEntries = BcdUtility.ParseEntries(result.Output);
+            ApplyEntryFilter();
         }
         catch (Exception ex)
         {
@@ -142,11 +130,47 @@ public sealed class BcdCheckForm : Form
         }
         finally
         {
-            _entries.EndUpdate();
             _refreshButton.Enabled = true;
-            _statusLabel.Text = $"{BcdUtility.GetTargetText(_session)}. Записей: {_entries.Items.Count}.";
             ShowSelectedDetails();
         }
+    }
+
+    private void ApplyEntryFilter()
+    {
+        var entries = _showTechnicalBox.Checked
+            ? _allEntries
+            : _allEntries.Where(IsUserFacingEntry).ToList();
+
+        _entries.BeginUpdate();
+        _entries.Items.Clear();
+        foreach (var entry in entries)
+        {
+            var item = new ListViewItem(GetDisplayName(entry));
+            item.SubItems.Add(string.IsNullOrWhiteSpace(entry.Identifier) ? "-" : entry.Identifier);
+            item.SubItems.Add(string.IsNullOrWhiteSpace(entry.Path) ? "-" : entry.Path);
+            item.SubItems.Add(NormalizeState(entry.SafeBoot));
+            item.SubItems.Add(NormalizeBoolean(entry.TestSigning));
+            item.SubItems.Add(NormalizeBoolean(entry.RecoveryEnabled));
+            item.SubItems.Add(string.IsNullOrWhiteSpace(entry.BootStatusPolicy) ? "-" : entry.BootStatusPolicy);
+            item.Tag = entry;
+
+            if (!string.IsNullOrWhiteSpace(entry.SafeBoot) ||
+                IsEnabledValue(entry.TestSigning))
+            {
+                item.BackColor = Color.FromArgb(255, 248, 220);
+            }
+
+            if (IsDisabledValue(entry.RecoveryEnabled))
+            {
+                item.ForeColor = Color.FromArgb(160, 40, 40);
+            }
+
+            _entries.Items.Add(item);
+        }
+
+        _entries.EndUpdate();
+        _statusLabel.Text = $"{BcdUtility.GetTargetText(_session)}. Показано: {_entries.Items.Count} из {_allEntries.Count}.";
+        ShowSelectedDetails();
     }
 
     private void ShowSelectedDetails()
@@ -154,5 +178,128 @@ public sealed class BcdCheckForm : Form
         _detailsBox.Text = _entries.SelectedItems.Count == 0
             ? _rawOutput
             : (_entries.SelectedItems[0].Tag as BcdEntry)?.Raw ?? string.Empty;
+    }
+
+    private static bool IsUserFacingEntry(BcdEntry entry)
+    {
+        var text = $"{entry.Section} {entry.Identifier} {entry.Description} {entry.Path}";
+        if (IsTechnicalEntry(text))
+        {
+            return false;
+        }
+
+        return entry.Identifier.Equals("{bootmgr}", StringComparison.OrdinalIgnoreCase) ||
+               entry.Identifier.Equals("{current}", StringComparison.OrdinalIgnoreCase) ||
+               entry.Identifier.Equals("{default}", StringComparison.OrdinalIgnoreCase) ||
+               ContainsAny(text, "Windows", "Загрузка Windows", "Диспетчер загрузки", "Recovery", "Восстановление", "Resume", "Возобновление", "winload", "winresume", "bootmgfw");
+    }
+
+    private static bool IsTechnicalEntry(string text)
+    {
+        return ContainsAny(
+            text,
+            "{emssettings}",
+            "{dbgsettings}",
+            "{hypervisorsettings}",
+            "{globalsettings}",
+            "{badmemory}",
+            "{ramdiskoptions}",
+            "{memdiag}",
+            "EMS Settings",
+            "Debugger Settings",
+            "Hypervisor Settings",
+            "Global Settings",
+            "Bad Memory",
+            "Memory Tester");
+    }
+
+    private static string GetDisplayName(BcdEntry entry)
+    {
+        var text = $"{entry.Section} {entry.Description} {entry.Path}";
+        if (entry.Identifier.Equals("{bootmgr}", StringComparison.OrdinalIgnoreCase) ||
+            entry.Path.Contains("bootmgfw", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Диспетчер загрузки Windows";
+        }
+
+        if (entry.Path.Contains("winload", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(entry.Description)
+                ? "Загрузчик Windows"
+                : entry.Description;
+        }
+
+        if (entry.Path.Contains("winresume", StringComparison.OrdinalIgnoreCase) ||
+            ContainsAny(text, "Resume", "Возобновление"))
+        {
+            return string.IsNullOrWhiteSpace(entry.Description)
+                ? "Возобновление Windows"
+                : entry.Description;
+        }
+
+        if (ContainsAny(text, "Recovery", "Восстановление"))
+        {
+            return string.IsNullOrWhiteSpace(entry.Description)
+                ? "Среда восстановления Windows"
+                : entry.Description;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Description))
+        {
+            return entry.Description;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Section))
+        {
+            return entry.Section;
+        }
+
+        return string.IsNullOrWhiteSpace(entry.Identifier) ? "Запись BCD" : entry.Identifier;
+    }
+
+    private static string NormalizeState(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "-" : value;
+    }
+
+    private static string NormalizeBoolean(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "-";
+        }
+
+        if (IsEnabledValue(value))
+        {
+            return "Включено";
+        }
+
+        if (IsDisabledValue(value))
+        {
+            return "Отключено";
+        }
+
+        return value;
+    }
+
+    private static bool IsEnabledValue(string value)
+    {
+        return value.Equals("Yes", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Да", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("On", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("True", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDisabledValue(string value)
+    {
+        return value.Equals("No", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Нет", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Off", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("False", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsAny(string text, params string[] values)
+    {
+        return values.Any(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
     }
 }

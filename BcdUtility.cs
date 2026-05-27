@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace IUnlocker;
 
@@ -52,8 +54,8 @@ internal static class BcdUtility
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.Default,
-                StandardErrorEncoding = Encoding.Default,
+                StandardOutputEncoding = GetConsoleEncoding(),
+                StandardErrorEncoding = GetConsoleEncoding(),
             },
         };
 
@@ -64,6 +66,18 @@ internal static class BcdUtility
         return new CommandResult(process.ExitCode, output + error);
     }
 
+    public static Encoding GetConsoleEncoding()
+    {
+        try
+        {
+            return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+        }
+        catch
+        {
+            return Encoding.Default;
+        }
+    }
+
     public static IReadOnlyList<BcdEntry> ParseEntries(string output)
     {
         var entries = new List<BcdEntry>();
@@ -71,12 +85,14 @@ internal static class BcdUtility
         var current = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var raw = new List<string>();
         string? title = null;
+        string? pendingTitle = null;
 
         void Flush()
         {
             if (current.Count == 0 && raw.Count == 0)
             {
                 title = null;
+                pendingTitle = null;
                 return;
             }
 
@@ -93,6 +109,7 @@ internal static class BcdUtility
             current = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             raw = [];
             title = null;
+            pendingTitle = null;
         }
 
         foreach (var rawLine in lines)
@@ -106,18 +123,20 @@ internal static class BcdUtility
 
             if (line.All(ch => ch == '-' || ch == '='))
             {
+                title = pendingTitle;
                 continue;
             }
 
             raw.Add(line);
-            var parts = line.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 2)
+            var match = Regex.Match(line, @"^([^\s]+)\s{2,}(.+)$");
+            if (match.Success)
             {
-                current[parts[0]] = parts[1].Trim();
+                current[match.Groups[1].Value] = match.Groups[2].Value.Trim();
             }
-            else if (title is null)
+            else
             {
-                title = line.Trim();
+                pendingTitle = line.Trim();
+                title ??= pendingTitle;
             }
         }
 

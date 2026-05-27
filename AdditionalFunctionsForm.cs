@@ -1729,8 +1729,8 @@ public sealed class AdditionalFunctionsForm : Form
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.Default,
-                StandardErrorEncoding = Encoding.Default,
+                StandardOutputEncoding = BcdUtility.GetConsoleEncoding(),
+                StandardErrorEncoding = BcdUtility.GetConsoleEncoding(),
             },
         };
 

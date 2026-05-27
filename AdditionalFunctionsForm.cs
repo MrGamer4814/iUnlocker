@@ -1064,8 +1064,9 @@ public sealed class AdditionalFunctionsForm : Form
         using var dialog = new SaveFileDialog
         {
             Title = "Сохранить отчёт iUnlocker",
-            Filter = "Текстовый отчёт (*.txt)|*.txt|Все файлы (*.*)|*.*",
-            FileName = $"iUnlocker-report-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+            Filter = "HTML отчёт (*.html)|*.html|Текстовый отчёт (*.txt)|*.txt",
+            FilterIndex = 1,
+            FileName = $"iUnlocker-report-{DateTime.Now:yyyyMMdd-HHmmss}.html",
             OverwritePrompt = true,
         };
 
@@ -1076,7 +1077,10 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            OfflineReportExporter.Export(_session, dialog.FileName);
+            var format = dialog.FilterIndex == 2
+                ? OfflineReportFormat.Text
+                : OfflineReportFormat.Html;
+            OfflineReportExporter.Export(_session, dialog.FileName, format);
             SetStatus($"Отчёт сохранён: {dialog.FileName}");
             MessageBox.Show(this, "Отчёт сохранён.", "Экспорт отчёта", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }

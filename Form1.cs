@@ -134,6 +134,11 @@ public partial class Form1 : Form
         _editScheduledTaskMenuItem.Click += (_, _) => EditSelectedScheduledTask();
         _deleteStartupMenuItem.Click += (_, _) => DeleteSelectedStartupEntry();
         _openInIUnlockerExplorerMenuItem.Click += (_, _) => OpenSelectedInIUnlockerExplorer();
+        _contextMenu.Opening += (_, e) =>
+        {
+            UpdateActions();
+            UiTheme.HideUnavailableContextMenuItems(_contextMenu);
+        };
         _contextMenu.Items.AddRange(new ToolStripItem[]
         {
             _copyCommandMenuItem,
@@ -851,9 +856,13 @@ public partial class Form1 : Form
             return;
         }
 
+        var deleteText = IsServiceOrDriverEntry(entry)
+            ? $"Удалить запись \"{entry.Name}\" из Services?\r\n\r\n{entry.Location}\r\n\r\nФайл драйвера/службы удалён не будет."
+            : $"Удалить запись автозагрузки \"{entry.Name}\"?\r\n\r\n{entry.Location}";
+
         var result = MessageBox.Show(
             this,
-            $"Удалить запись автозагрузки \"{entry.Name}\"?\r\n\r\n{entry.Location}",
+            deleteText,
             "Удалить автозагрузку",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -994,6 +1003,26 @@ public partial class Form1 : Form
             return;
         }
 
+        if (IsServiceOrDriverEntry(entry) &&
+            !string.IsNullOrWhiteSpace(entry.OfflineRegistryHiveFile) &&
+            !string.IsNullOrWhiteSpace(entry.OfflineRegistryMountPrefix) &&
+            !string.IsNullOrWhiteSpace(entry.RegistryKeyPath))
+        {
+            OfflineRegistryEditor.DeleteKey(
+                entry.OfflineRegistryHiveFile,
+                entry.OfflineRegistryMountPrefix,
+                entry.RegistryKeyPath);
+            return;
+        }
+
+        if (IsServiceOrDriverEntry(entry) &&
+            entry.RegistryHive is not null &&
+            !string.IsNullOrWhiteSpace(entry.RegistryKeyPath))
+        {
+            DeleteLiveRegistryKey(entry.RegistryHive.Value, entry.RegistryView, entry.RegistryKeyPath);
+            return;
+        }
+
         if (entry.Category == "Startup Folder" && File.Exists(entry.Location))
         {
             Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
@@ -1018,6 +1047,23 @@ public partial class Form1 : Form
         }
 
         throw new InvalidOperationException("Для этой записи удаление пока не поддерживается.");
+    }
+
+    private static void DeleteLiveRegistryKey(RegistryHive hive, RegistryView view, string keyPath)
+    {
+        var normalizedPath = keyPath.Trim('\\');
+        var separator = normalizedPath.LastIndexOf('\\');
+        if (separator <= 0 || separator >= normalizedPath.Length - 1)
+        {
+            throw new InvalidOperationException($"Нельзя удалить корневой ключ: {keyPath}");
+        }
+
+        var parentPath = normalizedPath[..separator];
+        var subKeyName = normalizedPath[(separator + 1)..];
+        using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+        using var parent = baseKey.OpenSubKey(parentPath, writable: true)
+            ?? throw new InvalidOperationException("Ключ реестра не найден или недоступен для записи.");
+        parent.DeleteSubKeyTree(subKeyName, throwOnMissingSubKey: true);
     }
 
     private void OpenSelectedInIUnlockerExplorer()
@@ -1291,10 +1337,18 @@ public partial class Form1 : Form
     private static bool CanDeleteStartupEntry(StartupEntry entry)
     {
         return entry.CanEditRegistry ||
+               (IsServiceOrDriverEntry(entry) && !string.IsNullOrWhiteSpace(entry.RegistryKeyPath) &&
+                (entry.RegistryHive is not null || !string.IsNullOrWhiteSpace(entry.OfflineRegistryHiveFile))) ||
                (entry.Category == "Startup Folder" && File.Exists(entry.Location)) ||
                !string.IsNullOrWhiteSpace(entry.ScheduledTaskPath) ||
                (entry.Category == "Scheduled Task" &&
                 entry.Source.Contains("offline", StringComparison.OrdinalIgnoreCase) &&
                 File.Exists(entry.Location));
+    }
+
+    private static bool IsServiceOrDriverEntry(StartupEntry entry)
+    {
+        return entry.Category.Equals("Services", StringComparison.OrdinalIgnoreCase) ||
+               entry.Category.Equals("Drivers", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -32,6 +32,27 @@ public static class OfflineRegistryEditor
 
         key.DeleteValue(valueName, throwOnMissingValue: true);
     }
+
+    public static void DeleteKey(
+        string hiveFile,
+        string mountPrefix,
+        string keyPath)
+    {
+        using var hive = OfflineRegistryHiveMount.Load(hiveFile, mountPrefix);
+        var normalizedPath = keyPath.Trim('\\');
+        var separator = normalizedPath.LastIndexOf('\\');
+        if (separator <= 0 || separator >= normalizedPath.Length - 1)
+        {
+            throw new InvalidOperationException($"Нельзя удалить корневой offline-ключ: {keyPath}");
+        }
+
+        var parentPath = normalizedPath[..separator];
+        var subKeyName = normalizedPath[(separator + 1)..];
+        using var parent = hive.Root.OpenSubKey(parentPath, writable: true)
+            ?? throw new InvalidOperationException($"Родительский offline-ключ не найден: {parentPath}");
+
+        parent.DeleteSubKeyTree(subKeyName, throwOnMissingSubKey: true);
+    }
 }
 
 public sealed class OfflineRegistryHiveMount : IDisposable

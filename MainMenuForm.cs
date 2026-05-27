@@ -145,7 +145,7 @@ public sealed class MainMenuForm : Form
             Text = text,
             Dock = DockStyle.Fill,
             Margin = new Padding(0, 0, 14, 14),
-            Font = new Font("Segoe UI", 11, FontStyle.Regular),
+            Font = AppFonts.Create(11F),
             TextAlign = ContentAlignment.MiddleCenter,
         };
         UiTheme.StyleButton(button);

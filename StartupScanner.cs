@@ -330,7 +330,10 @@ public static class StartupScanner
                             scope,
                             "Service Control Manager",
                             command,
-                            $@"{target.DisplayHive}\SYSTEM\CurrentControlSet\Services\{serviceName} ({ViewName(target.View)})"));
+                            $@"{target.DisplayHive}\SYSTEM\CurrentControlSet\Services\{serviceName} ({ViewName(target.View)})",
+                            RegistryHive: target.Hive,
+                            RegistryView: target.View,
+                            RegistryKeyPath: $@"SYSTEM\CurrentControlSet\Services\{serviceName}"));
                 }
             }
             catch (Exception ex) when (IsRegistryAccessException(ex))

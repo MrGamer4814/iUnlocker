@@ -159,8 +159,15 @@ public sealed class RegistryEditorForm : Form
 
         var menu = new ContextMenuStrip();
         UiTheme.StyleContextMenu(menu);
-        menu.Items.Add("Изменить", null, (_, _) => EditSelectedValue());
-        menu.Items.Add("Удалить значение", null, (_, _) => DeleteSelectedValue());
+        var editMenuItem = menu.Items.Add("Изменить", null, (_, _) => EditSelectedValue());
+        var deleteMenuItem = menu.Items.Add("Удалить значение", null, (_, _) => DeleteSelectedValue());
+        menu.Opening += (_, e) =>
+        {
+            var hasSelection = _valueList.SelectedItems.Count > 0;
+            editMenuItem.Enabled = hasSelection;
+            deleteMenuItem.Enabled = hasSelection;
+            UiTheme.HideUnavailableContextMenuItems(menu);
+        };
         _valueList.ContextMenuStrip = menu;
 
         split.Panel1.Controls.Add(_keyTree);

@@ -339,7 +339,20 @@ public static class OfflineStartupScanner
                 _ => "Unknown",
             };
 
-            AddEntry(entries, seen, new StartupEntry(entryType == "Драйвер" ? "Drivers" : "Services", serviceName, entryType, scope, "Service Control Manager offline", command, $@"Offline SYSTEM\{controlSet}\Services\{serviceName}"));
+            AddEntry(
+                entries,
+                seen,
+                new StartupEntry(
+                    entryType == "Драйвер" ? "Drivers" : "Services",
+                    serviceName,
+                    entryType,
+                    scope,
+                    "Service Control Manager offline",
+                    command,
+                    $@"Offline SYSTEM\{controlSet}\Services\{serviceName}",
+                    RegistryKeyPath: $@"{controlSet}\Services\{serviceName}",
+                    OfflineRegistryHiveFile: hive.HiveFile,
+                    OfflineRegistryMountPrefix: hive.MountPrefix));
         }
     }
 

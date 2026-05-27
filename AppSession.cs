@@ -6,6 +6,24 @@ public sealed record AppSession(string DriveRoot, string? WindowsPath, bool IsWi
 {
     public string EnvironmentName => IsWinPe ? "WinPE" : "Windows";
 
+    public static AppSession CreateForCurrentWindows()
+    {
+        var windowsPath = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (string.IsNullOrWhiteSpace(windowsPath))
+        {
+            windowsPath = Path.Combine(Environment.GetEnvironmentVariable("SystemRoot") ?? "C:\\Windows");
+        }
+
+        var driveRoot = Path.GetPathRoot(windowsPath);
+        if (string.IsNullOrWhiteSpace(driveRoot))
+        {
+            driveRoot = Environment.GetEnvironmentVariable("SystemDrive") ?? "C:";
+            driveRoot = driveRoot.TrimEnd('\\') + "\\";
+        }
+
+        return new AppSession(driveRoot, windowsPath, IsWinPe: false);
+    }
+
     public static bool DetectWinPe()
     {
         try

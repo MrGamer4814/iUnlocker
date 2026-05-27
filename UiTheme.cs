@@ -19,19 +19,19 @@ internal static class UiTheme
     public static void ApplyForm(Form form)
     {
         form.BackColor = Background;
-        form.Font = new Font("Segoe UI", 9F, FontStyle.Regular);
+        form.Font = AppFonts.Create(9F);
     }
 
     public static void StyleTitle(Label label, float size = 20F)
     {
         label.ForeColor = Text;
-        label.Font = new Font("Segoe UI", size, FontStyle.Bold);
+        label.Font = AppFonts.Create(size, FontStyle.Bold);
     }
 
     public static void StyleSubtitle(Label label)
     {
         label.ForeColor = MutedText;
-        label.Font = new Font("Segoe UI", 10F, FontStyle.Regular);
+        label.Font = AppFonts.Create(10F);
     }
 
     public static void StyleInfo(Label label)
@@ -56,7 +56,7 @@ internal static class UiTheme
 
         if (button.Font.Size < 9.5F)
         {
-            button.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular);
+            button.Font = AppFonts.Create(9.5F);
         }
     }
 
@@ -124,6 +124,16 @@ internal static class UiTheme
         menu.BackColor = Surface;
         menu.ForeColor = Text;
         menu.RenderMode = ToolStripRenderMode.System;
+    }
+
+    public static bool HideUnavailableContextMenuItems(ContextMenuStrip menu)
+    {
+        foreach (ToolStripItem item in menu.Items)
+        {
+            item.Visible = item is ToolStripSeparator || item.Enabled;
+        }
+
+        return menu.Items.Cast<ToolStripItem>().Any(item => item.Visible && item is not ToolStripSeparator);
     }
 
     public static void ApplyControlTree(Control parent)

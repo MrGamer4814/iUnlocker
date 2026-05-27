@@ -3,13 +3,17 @@ namespace IUnlocker;
 using System.Diagnostics;
 using Microsoft.Win32;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public sealed class AdditionalFunctionsForm : Form
 {
     private readonly AppSession _session;
     private readonly Button _replaceAccessibilityButton = new();
     private readonly Button _setCmdLineButton = new();
+    private readonly Button _rescueLogonButton = new();
+    private readonly Button _offlineDriversButton = new();
     private readonly Button _restoreLogonUiButton = new();
+    private readonly Button _restoreFontsButton = new();
     private readonly Button _cleanTempButton = new();
     private readonly Button _sfcScanButton = new();
     private readonly Button _dismCheckHealthButton = new();
@@ -17,15 +21,20 @@ public sealed class AdditionalFunctionsForm : Form
     private readonly Button _dismRestoreHealthButton = new();
     private readonly Button _chkdskButton = new();
     private readonly Button _bootCheckButton = new();
+    private readonly Button _bcdCheckButton = new();
+    private readonly Button _exportReportButton = new();
     private readonly Button _resetSecurityPolicyButton = new();
     private readonly Button _disableTestModeButton = new();
     private readonly Button _verifySignaturesButton = new();
     private readonly Button _enableUacButton = new();
     private readonly Button _restartButton = new();
+    private readonly Button _restartSafeModeButton = new();
     private readonly Button _shutdownButton = new();
+    private readonly CheckBox _safeModeCheckBox = new();
     private readonly Label _statusLabel = new();
     private bool _cmdLineInstalled;
     private bool _accessibilityToolsReplaced;
+    private bool _syncingSafeModeCheckBox;
 
     public AdditionalFunctionsForm(AppSession session)
     {
@@ -97,9 +106,21 @@ public sealed class AdditionalFunctionsForm : Form
             "Поставить запуск в CmdLine",
             (_, _) => SetSetupCmdLine());
         ConfigureActionButton(
+            _rescueLogonButton,
+            "Спасти вход Windows",
+            (_, _) => RescueWindowsLogon());
+        ConfigureActionButton(
+            _offlineDriversButton,
+            "Удаление драйвера offline",
+            (_, _) => OpenOfflineDriverManager());
+        ConfigureActionButton(
             _restoreLogonUiButton,
             "Восстановить LogonUI",
             (_, _) => RestoreLogonUi());
+        ConfigureActionButton(
+            _restoreFontsButton,
+            "Восстановить все шрифты",
+            (_, _) => RestoreAllFonts());
         ConfigureActionButton(
             _cleanTempButton,
             "Очистка TEMP",
@@ -129,6 +150,14 @@ public sealed class AdditionalFunctionsForm : Form
             "Проверка загрузчика выбранной Windows",
             (_, _) => RunBootloaderCheck());
         ConfigureActionButton(
+            _bcdCheckButton,
+            "Проверка BCD",
+            (_, _) => OpenBcdCheck());
+        ConfigureActionButton(
+            _exportReportButton,
+            "Экспорт отчёта",
+            (_, _) => ExportOfflineReport());
+        ConfigureActionButton(
             _resetSecurityPolicyButton,
             "Сброс политик безопасности",
             (_, _) => ResetSecurityPolicy());
@@ -149,17 +178,24 @@ public sealed class AdditionalFunctionsForm : Form
             "Перезагрузка компьютера",
             (_, _) => RestartComputer());
         ConfigureActionButton(
+            _restartSafeModeButton,
+            "Перезагрузиться в безопасный режим",
+            (_, _) => RestartToSafeMode());
+        ConfigureActionButton(
             _shutdownButton,
             "Выключение компьютера",
             (_, _) => ShutdownComputer());
+        ConfigureSafeModeCheckBox();
 
         var offlineWindows = IsOfflineWindowsSelected();
         _replaceAccessibilityButton.Enabled = offlineWindows;
+        _offlineDriversButton.Enabled = offlineWindows;
         _setCmdLineButton.Enabled = CanSetCmdLine();
         _bootCheckButton.Enabled = _session.IsWinPe;
         _resetSecurityPolicyButton.Enabled = IsCurrentWindowsSelected();
         UpdateAccessibilityButtonState();
         UpdateCmdLineButtonState();
+        UpdateSafeModeState();
 
         _statusLabel.Dock = DockStyle.Fill;
         _statusLabel.AutoSize = false;
@@ -176,6 +212,7 @@ public sealed class AdditionalFunctionsForm : Form
         AddActionButton(recoveryPage, _dismScanHealthButton, 1, 1);
         AddActionButton(recoveryPage, _dismRestoreHealthButton, 0, 2, columnSpan: 2);
         AddActionButton(recoveryPage, _chkdskButton, 0, 3, columnSpan: 2);
+        AddActionButton(recoveryPage, _restoreFontsButton, 0, 4, columnSpan: 2);
         AddTab(tabs, "Восстановление", recoveryPage);
 
         var securityPage = CreateActionPage();
@@ -184,17 +221,23 @@ public sealed class AdditionalFunctionsForm : Form
         AddActionButton(securityPage, _disableTestModeButton, 0, 1);
         AddActionButton(securityPage, _verifySignaturesButton, 1, 1);
         AddActionButton(securityPage, _bootCheckButton, 0, 2, columnSpan: 2);
+        AddActionButton(securityPage, _bcdCheckButton, 0, 3);
+        AddActionButton(securityPage, _exportReportButton, 1, 3);
         AddTab(tabs, "Безопасность", securityPage);
 
         var accessPage = CreateActionPage();
         AddActionButton(accessPage, _replaceAccessibilityButton, 0, 0);
         AddActionButton(accessPage, _setCmdLineButton, 1, 0);
-        AddActionButton(accessPage, _cleanTempButton, 0, 1, columnSpan: 2);
+        AddActionButton(accessPage, _rescueLogonButton, 0, 1, columnSpan: 2);
+        AddActionButton(accessPage, _offlineDriversButton, 0, 2);
+        AddActionButton(accessPage, _cleanTempButton, 1, 2);
         AddTab(tabs, "Система", accessPage);
 
         var powerPage = CreateActionPage();
         AddActionButton(powerPage, _restartButton, 0, 0);
         AddActionButton(powerPage, _shutdownButton, 1, 0);
+        AddActionButton(powerPage, _restartSafeModeButton, 0, 1, columnSpan: 2);
+        AddActionControl(powerPage, _safeModeCheckBox, 0, 2, columnSpan: 2);
         AddTab(tabs, "Питание", powerPage);
 
         content.Controls.Add(tabs, 0, 0);
@@ -238,10 +281,15 @@ public sealed class AdditionalFunctionsForm : Form
 
     private static void AddActionButton(TableLayoutPanel panel, Button button, int column, int row, int columnSpan = 1)
     {
-        panel.Controls.Add(button, column, row);
+        AddActionControl(panel, button, column, row, columnSpan);
+    }
+
+    private static void AddActionControl(TableLayoutPanel panel, Control control, int column, int row, int columnSpan = 1)
+    {
+        panel.Controls.Add(control, column, row);
         if (columnSpan > 1)
         {
-            panel.SetColumnSpan(button, columnSpan);
+            panel.SetColumnSpan(control, columnSpan);
         }
     }
 
@@ -250,10 +298,21 @@ public sealed class AdditionalFunctionsForm : Form
         button.Text = text;
         button.Dock = DockStyle.Fill;
         button.Margin = new Padding(0, 0, 12, 12);
-        button.Font = new Font("Segoe UI", 10, FontStyle.Regular);
+        button.Font = AppFonts.Create(10F);
         button.TextAlign = ContentAlignment.MiddleCenter;
         UiTheme.StyleButton(button);
         button.Click += onClick;
+    }
+
+    private void ConfigureSafeModeCheckBox()
+    {
+        _safeModeCheckBox.Text = "Безопасный режим";
+        _safeModeCheckBox.Dock = DockStyle.Fill;
+        _safeModeCheckBox.Margin = new Padding(4, 4, 12, 12);
+        _safeModeCheckBox.TextAlign = ContentAlignment.MiddleLeft;
+        _safeModeCheckBox.CheckAlign = ContentAlignment.MiddleLeft;
+        _safeModeCheckBox.CheckedChanged += (_, _) => SafeModeCheckBoxChanged();
+        UiTheme.StyleCheckBox(_safeModeCheckBox);
     }
 
     private bool IsOfflineWindowsSelected()
@@ -628,6 +687,226 @@ public sealed class AdditionalFunctionsForm : Form
         return false;
     }
 
+    private void OpenOfflineDriverManager()
+    {
+        if (!EnsureOfflineWindowsAction())
+        {
+            return;
+        }
+
+        var form = new OfflineDriverManagerForm(_session);
+        form.Show(this);
+    }
+
+    private void RescueWindowsLogon()
+    {
+        if (string.IsNullOrWhiteSpace(_session.WindowsPath) || !Directory.Exists(_session.WindowsPath))
+        {
+            MessageBox.Show(this, "На выбранном диске не найдена папка Windows.", "Спасти вход Windows", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var message =
+            "Применить режим спасения входа?\r\n\r\n" +
+            "Будет восстановлено:\r\n" +
+            "- Winlogon Shell = explorer.exe\r\n" +
+            "- Winlogon Userinit = userinit.exe\r\n" +
+            "- Setup CmdLine будет очищен\r\n" +
+            "- Safe Mode будет отключён в BCD\r\n" +
+            "- IFEO Debugger для logon/explorer компонентов будет удалён\r\n\r\n" +
+            "После этого будет предложено запустить SFC для LogonUI.exe.";
+
+        if (MessageBox.Show(this, message, "Спасти вход Windows", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        var actions = new List<string>();
+        var warnings = new List<string>();
+
+        try
+        {
+            RestoreWinlogonDefaults();
+            actions.Add("Winlogon восстановлен");
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Winlogon: {ex.Message}");
+        }
+
+        try
+        {
+            ClearSetupCmdLine();
+            actions.Add("Setup CmdLine очищен");
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"CmdLine: {ex.Message}");
+        }
+
+        try
+        {
+            ClearLogonIfeoDebuggers();
+            actions.Add("IFEO Debugger удалён");
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"IFEO: {ex.Message}");
+        }
+
+        try
+        {
+            SetSafeModeEnabled(false);
+            actions.Add("Safe Mode отключён");
+            UpdateSafeModeState();
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"Safe Mode: {ex.Message}");
+        }
+
+        TryRestoreAccessibilityToolsForRescue(actions, warnings);
+        SetStatus($"Спасение входа завершено. Успешно: {actions.Count}. Предупреждений: {warnings.Count}.");
+
+        var summary = string.Join("\r\n", actions.Select(action => "- " + action));
+        if (warnings.Count > 0)
+        {
+            summary += "\r\n\r\nПредупреждения:\r\n" + string.Join("\r\n", warnings.Select(warning => "- " + warning));
+        }
+
+        if (MessageBox.Show(
+                this,
+                $"{summary}\r\n\r\nЗапустить точечное восстановление LogonUI.exe через SFC?",
+                "Спасти вход Windows",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) == DialogResult.Yes)
+        {
+            StartLogonUiSfc();
+        }
+    }
+
+    private void RestoreWinlogonDefaults()
+    {
+        if (IsCurrentWindowsSelected())
+        {
+            using var key = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", writable: true)
+                ?? throw new InvalidOperationException("Не удалось открыть Winlogon.");
+            WriteWinlogonDefaults(key);
+            return;
+        }
+
+        var softwareHive = Path.Combine(_session.WindowsPath!, "System32", "config", "SOFTWARE");
+        using var hive = OfflineRegistryHiveMount.Load(softwareHive, "IUnlocker_RESCUE_SOFTWARE");
+        using var offlineKey = hive.Root.CreateSubKey(@"Microsoft\Windows NT\CurrentVersion\Winlogon", writable: true)
+            ?? throw new InvalidOperationException("Не удалось открыть offline Winlogon.");
+        WriteWinlogonDefaults(offlineKey);
+    }
+
+    private void WriteWinlogonDefaults(RegistryKey key)
+    {
+        key.SetValue("Shell", "explorer.exe", RegistryValueKind.String);
+        key.SetValue("Userinit", GetDefaultUserinitValue(), RegistryValueKind.String);
+    }
+
+    private string GetDefaultUserinitValue()
+    {
+        if (IsCurrentWindowsSelected())
+        {
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "system32", "userinit.exe") + ",";
+        }
+
+        return @"C:\Windows\system32\userinit.exe,";
+    }
+
+    private void ClearSetupCmdLine()
+    {
+        if (IsOfflineWindowsSelected())
+        {
+            var systemHive = Path.Combine(_session.WindowsPath!, "System32", "config", "SYSTEM");
+            using var hive = OfflineRegistryHiveMount.Load(systemHive, "IUnlocker_RESCUE_SYSTEM");
+            using var setupKey = hive.Root.CreateSubKey("Setup", writable: true)
+                ?? throw new InvalidOperationException("Не удалось открыть offline SYSTEM\\Setup.");
+            WriteSetupDefaults(setupKey);
+            return;
+        }
+
+        using var liveSetupKey = Registry.LocalMachine.CreateSubKey(@"SYSTEM\Setup", writable: true)
+            ?? throw new InvalidOperationException(@"Не удалось открыть HKLM\SYSTEM\Setup.");
+        WriteSetupDefaults(liveSetupKey);
+    }
+
+    private static void WriteSetupDefaults(RegistryKey setupKey)
+    {
+        setupKey.SetValue("CmdLine", string.Empty, RegistryValueKind.String);
+        setupKey.SetValue("SetupType", 0, RegistryValueKind.DWord);
+    }
+
+    private void ClearLogonIfeoDebuggers()
+    {
+        if (IsCurrentWindowsSelected())
+        {
+            using var ifeo = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options", writable: true)
+                ?? throw new InvalidOperationException("Не удалось открыть IFEO.");
+            ClearIfeoDebuggers(ifeo);
+            return;
+        }
+
+        var softwareHive = Path.Combine(_session.WindowsPath!, "System32", "config", "SOFTWARE");
+        using var hive = OfflineRegistryHiveMount.Load(softwareHive, "IUnlocker_RESCUE_IFEO");
+        using var offlineIfeo = hive.Root.CreateSubKey(@"Microsoft\Windows NT\CurrentVersion\Image File Execution Options", writable: true)
+            ?? throw new InvalidOperationException("Не удалось открыть offline IFEO.");
+        ClearIfeoDebuggers(offlineIfeo);
+    }
+
+    private static void ClearIfeoDebuggers(RegistryKey ifeoRoot)
+    {
+        foreach (var imageName in new[] { "explorer.exe", "userinit.exe", "winlogon.exe", "logonui.exe", "sethc.exe", "utilman.exe" })
+        {
+            using var imageKey = ifeoRoot.OpenSubKey(imageName, writable: true);
+            imageKey?.DeleteValue("Debugger", throwOnMissingValue: false);
+        }
+    }
+
+    private void TryRestoreAccessibilityToolsForRescue(List<string> actions, List<string> warnings)
+    {
+        if (!IsOfflineWindowsSelected())
+        {
+            return;
+        }
+
+        try
+        {
+            var system32 = Path.Combine(_session.WindowsPath!, "System32");
+            RestoreSystemToolIfBackupExists(Path.Combine(system32, "sethc.exe"));
+            RestoreSystemToolIfBackupExists(Path.Combine(system32, "utilman.exe"));
+            UpdateAccessibilityButtonState();
+            actions.Add("sethc/utilman восстановлены при наличии backup");
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"sethc/utilman: {ex.Message}");
+        }
+    }
+
+    private static void RestoreSystemToolIfBackupExists(string targetExe)
+    {
+        var backup = GetExistingBackupPath(targetExe);
+        if (backup is not null && File.Exists(backup))
+        {
+            File.Copy(backup, targetExe, overwrite: true);
+        }
+    }
+
+    private void StartLogonUiSfc()
+    {
+        var logonUiPath = Path.Combine(_session.WindowsPath!, "System32", "LogonUI.exe");
+        var arguments = IsCurrentWindowsSelected()
+            ? $"/scanfile={QuoteArgument(logonUiPath)}"
+            : $"/scanfile={QuoteArgument(logonUiPath)} /offbootdir={QuoteArgument(EnsureTrailingSlash(_session.DriveRoot))} /offwindir={QuoteArgument(_session.WindowsPath!)}";
+        StartVisibleCmdCommand("iUnlocker LogonUI", $"sfc.exe {arguments}");
+        SetStatus("Точечное восстановление LogonUI запущено в окне cmd.exe.");
+    }
+
     private void RunSfcScan()
     {
         if (string.IsNullOrWhiteSpace(_session.WindowsPath) || !Directory.Exists(_session.WindowsPath))
@@ -767,6 +1046,47 @@ public sealed class AdditionalFunctionsForm : Form
         }
     }
 
+    private void OpenBcdCheck()
+    {
+        try
+        {
+            var form = new BcdCheckForm(_session);
+            form.Show(this);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Проверка BCD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void ExportOfflineReport()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Сохранить отчёт iUnlocker",
+            Filter = "Текстовый отчёт (*.txt)|*.txt|Все файлы (*.*)|*.*",
+            FileName = $"iUnlocker-report-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+            OverwritePrompt = true,
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            OfflineReportExporter.Export(_session, dialog.FileName);
+            SetStatus($"Отчёт сохранён: {dialog.FileName}");
+            MessageBox.Show(this, "Отчёт сохранён.", "Экспорт отчёта", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Отчёт не сохранён: {ex.Message}");
+            MessageBox.Show(this, ex.Message, "Экспорт отчёта", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     private void RestoreLogonUi()
     {
         if (string.IsNullOrWhiteSpace(_session.WindowsPath) || !Directory.Exists(_session.WindowsPath))
@@ -794,6 +1114,203 @@ public sealed class AdditionalFunctionsForm : Form
         {
             SetStatus($"LogonUI не запущен: {ex.Message}");
             MessageBox.Show(this, ex.Message, "LogonUI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void RestoreAllFonts()
+    {
+        if (string.IsNullOrWhiteSpace(_session.WindowsPath) || !Directory.Exists(_session.WindowsPath))
+        {
+            MessageBox.Show(this, "На выбранном диске не найдена папка Windows.", "Восстановление шрифтов", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var confirmation = IsCurrentWindowsSelected()
+            ? "Восстановить стандартные шрифты текущей Windows?\r\n\r\nБудут сброшены подмены Segoe UI, очищен кэш шрифтов и запущена точечная проверка SFC только для файлов шрифтов."
+            : $"Восстановить стандартные шрифты выбранной Windows?\r\n\r\nWindows: {_session.WindowsPath}\r\n\r\nБудут сброшены offline-подмены Segoe UI, очищен offline-кэш шрифтов и запущена точечная offline-проверка SFC только для файлов шрифтов.";
+        if (MessageBox.Show(this, confirmation, "Восстановление шрифтов", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            RestoreFontRegistryDefaults();
+            var (deleted, errors) = CleanSelectedFontCache();
+            var command = BuildFontSfcCommand();
+
+            StartVisibleCmdCommand("iUnlocker Fonts", command);
+            SetStatus($"Восстановление шрифтов запущено. Кэш очищен: {deleted}, ошибок: {errors}.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Шрифты не восстановлены: {ex.Message}");
+            MessageBox.Show(this, ex.Message, "Восстановление шрифтов", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private string BuildFontSfcCommand()
+    {
+        var suffix = IsCurrentWindowsSelected()
+            ? string.Empty
+            : $" /offbootdir={QuoteArgument(EnsureTrailingSlash(_session.DriveRoot))} /offwindir={QuoteArgument(_session.WindowsPath!)}";
+
+        return string.Join(" & ", GetSystemFontFiles().Select(file =>
+        {
+            var path = Path.Combine(_session.WindowsPath!, "Fonts", file);
+            return $"sfc.exe /scanfile={QuoteArgument(path)}{suffix}";
+        }));
+    }
+
+    private static IReadOnlyList<string> GetSystemFontFiles()
+    {
+        return
+        [
+            "segoeui.ttf",
+            "segoeuib.ttf",
+            "segoeuii.ttf",
+            "segoeuiz.ttf",
+            "segoeuil.ttf",
+            "seguisb.ttf",
+            "segoeuisl.ttf",
+            "seguisym.ttf",
+            "seguiemj.ttf",
+            "seguihis.ttf",
+            "segmdl2.ttf",
+            "SegoeIcons.ttf",
+            "tahoma.ttf",
+            "tahomabd.ttf",
+            "arial.ttf",
+            "arialbd.ttf",
+            "ariali.ttf",
+            "arialbi.ttf",
+            "micross.ttf",
+        ];
+    }
+
+    private void RestoreFontRegistryDefaults()
+    {
+        if (IsCurrentWindowsSelected())
+        {
+            using var fontsKey = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts", writable: true)
+                ?? throw new InvalidOperationException("Не удалось открыть ключ Fonts.");
+            using var substitutesKey = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes", writable: true)
+                ?? throw new InvalidOperationException("Не удалось открыть ключ FontSubstitutes.");
+            WriteDefaultFontValues(fontsKey, substitutesKey);
+            return;
+        }
+
+        var softwareHive = Path.Combine(_session.WindowsPath!, "System32", "config", "SOFTWARE");
+        using var hive = OfflineRegistryHiveMount.Load(softwareHive, "IUnlocker_FONTS");
+        using var offlineFontsKey = hive.Root.CreateSubKey(@"Microsoft\Windows NT\CurrentVersion\Fonts", writable: true)
+            ?? throw new InvalidOperationException("Не удалось открыть offline-ключ Fonts.");
+        using var offlineSubstitutesKey = hive.Root.CreateSubKey(@"Microsoft\Windows NT\CurrentVersion\FontSubstitutes", writable: true)
+            ?? throw new InvalidOperationException("Не удалось открыть offline-ключ FontSubstitutes.");
+        WriteDefaultFontValues(offlineFontsKey, offlineSubstitutesKey);
+    }
+
+    private static void WriteDefaultFontValues(RegistryKey fontsKey, RegistryKey substitutesKey)
+    {
+        var segoeFonts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Segoe UI (TrueType)"] = "segoeui.ttf",
+            ["Segoe UI Black (TrueType)"] = "seguibl.ttf",
+            ["Segoe UI Bold (TrueType)"] = "segoeuib.ttf",
+            ["Segoe UI Bold Italic (TrueType)"] = "segoeuiz.ttf",
+            ["Segoe UI Emoji (TrueType)"] = "seguiemj.ttf",
+            ["Segoe UI Historic (TrueType)"] = "seguihis.ttf",
+            ["Segoe UI Italic (TrueType)"] = "segoeuii.ttf",
+            ["Segoe UI Light (TrueType)"] = "segoeuil.ttf",
+            ["Segoe UI Semibold (TrueType)"] = "seguisb.ttf",
+            ["Segoe UI Semilight (TrueType)"] = "segoeuisl.ttf",
+            ["Segoe UI Symbol (TrueType)"] = "seguisym.ttf",
+            ["Segoe MDL2 Assets (TrueType)"] = "segmdl2.ttf",
+            ["Segoe Fluent Icons (TrueType)"] = "SegoeIcons.ttf",
+        };
+
+        foreach (var pair in segoeFonts)
+        {
+            fontsKey.SetValue(pair.Key, pair.Value, RegistryValueKind.String);
+        }
+
+        foreach (var valueName in substitutesKey.GetValueNames()
+                     .Where(name => name.StartsWith("Segoe UI", StringComparison.OrdinalIgnoreCase))
+                     .ToArray())
+        {
+            substitutesKey.DeleteValue(valueName, throwOnMissingValue: false);
+        }
+
+        substitutesKey.SetValue("MS Shell Dlg", "Microsoft Sans Serif", RegistryValueKind.String);
+        substitutesKey.SetValue("MS Shell Dlg 2", "Tahoma", RegistryValueKind.String);
+    }
+
+    private (int Deleted, int Errors) CleanSelectedFontCache()
+    {
+        var deleted = 0;
+        var errors = 0;
+        var candidates = new List<string>
+        {
+            Path.Combine(_session.WindowsPath!, "System32", "FNTCACHE.DAT"),
+            Path.Combine(_session.WindowsPath!, "ServiceProfiles", "LocalService", "AppData", "Local"),
+        };
+
+        var usersRoot = Path.Combine(_session.DriveRoot, "Users");
+        if (Directory.Exists(usersRoot))
+        {
+            foreach (var profile in Directory.EnumerateDirectories(usersRoot))
+            {
+                candidates.Add(Path.Combine(profile, "AppData", "Local"));
+            }
+        }
+
+        if (IsCurrentWindowsSelected())
+        {
+            TryStartProcess("net.exe", "stop FontCache");
+        }
+
+        foreach (var candidate in candidates)
+        {
+            DeleteFontCacheCandidate(candidate, ref deleted, ref errors);
+        }
+
+        if (IsCurrentWindowsSelected())
+        {
+            TryStartProcess("net.exe", "start FontCache");
+        }
+
+        return (deleted, errors);
+    }
+
+    private static void DeleteFontCacheCandidate(string path, ref int deleted, ref int errors)
+    {
+        if (File.Exists(path))
+        {
+            TryDeleteFile(path, ref deleted, ref errors);
+            return;
+        }
+
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(path, "FontCache*", SearchOption.TopDirectoryOnly))
+        {
+            TryDeleteFile(file, ref deleted, ref errors);
+        }
+    }
+
+    private static void TryDeleteFile(string path, ref int deleted, ref int errors)
+    {
+        try
+        {
+            File.SetAttributes(path, FileAttributes.Normal);
+            File.Delete(path);
+            deleted++;
+        }
+        catch
+        {
+            errors++;
         }
     }
 
@@ -1061,6 +1578,167 @@ public sealed class AdditionalFunctionsForm : Form
         {
             return false;
         }
+    }
+
+    private void SafeModeCheckBoxChanged()
+    {
+        if (_syncingSafeModeCheckBox)
+        {
+            return;
+        }
+
+        var enable = _safeModeCheckBox.Checked;
+        var message = enable
+            ? "Включить постоянную загрузку в безопасный режим?\r\n\r\nWindows будет входить в безопасный режим при каждой загрузке, пока этот checkbox не будет отключён."
+            : "Отключить постоянную загрузку в безопасный режим?";
+
+        if (MessageBox.Show(this, message, "Безопасный режим", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            UpdateSafeModeState();
+            return;
+        }
+
+        try
+        {
+            SetSafeModeEnabled(enable);
+            SetStatus(enable
+                ? "Постоянная загрузка в безопасный режим включена."
+                : "Постоянная загрузка в безопасный режим отключена.");
+            UpdateSafeModeState();
+        }
+        catch (Exception ex)
+        {
+            UpdateSafeModeState();
+            MessageBox.Show(this, ex.Message, "Безопасный режим", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void RestartToSafeMode()
+    {
+        if (MessageBox.Show(
+                this,
+                "Включить безопасный режим и перезагрузить компьютер?\r\n\r\nЧтобы потом вернуться к обычной загрузке, отключите checkbox \"Безопасный режим\".",
+                "Безопасный режим",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            SetSafeModeEnabled(true);
+            UpdateSafeModeState();
+            SetStatus("Безопасный режим включён, отправлена команда перезагрузки.");
+            StartPowerAction(reboot: true);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Безопасный режим", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void UpdateSafeModeState()
+    {
+        var available = CanUseSafeModeBcd();
+        _restartSafeModeButton.Enabled = available;
+        _safeModeCheckBox.Enabled = available;
+
+        _syncingSafeModeCheckBox = true;
+        try
+        {
+            _safeModeCheckBox.Checked = available && IsSafeModeEnabled();
+        }
+        catch
+        {
+            _safeModeCheckBox.Checked = false;
+            _safeModeCheckBox.Enabled = false;
+        }
+        finally
+        {
+            _syncingSafeModeCheckBox = false;
+        }
+    }
+
+    private bool CanUseSafeModeBcd()
+    {
+        if (!_session.IsWinPe)
+        {
+            return true;
+        }
+
+        return IsOfflineWindowsSelected() && !string.IsNullOrWhiteSpace(FindSelectedBcdStore());
+    }
+
+    private bool IsSafeModeEnabled()
+    {
+        var result = RunBcdEdit(GetSafeModeEnumArguments());
+        return result.ExitCode == 0 &&
+               result.Output.Contains("safeboot", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void SetSafeModeEnabled(bool enable)
+    {
+        if (!CanUseSafeModeBcd())
+        {
+            throw new InvalidOperationException("BCD выбранной Windows не найден. В WinPE выберите диск с установленной Windows.");
+        }
+
+        var arguments = enable
+            ? GetSafeModeSetArguments()
+            : GetSafeModeDeleteArguments();
+        var result = RunBcdEdit(arguments);
+        if (result.ExitCode != 0 && !(enable == false && result.Output.Contains("Element not found", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(result.Output.Trim().Length == 0
+                ? "bcdedit завершился с ошибкой."
+                : result.Output.Trim());
+        }
+    }
+
+    private string GetSafeModeEnumArguments()
+    {
+        return _session.IsWinPe
+            ? $"/store {QuoteArgument(FindSelectedBcdStore()!)} /enum {{default}}"
+            : "/enum {current}";
+    }
+
+    private string GetSafeModeSetArguments()
+    {
+        return _session.IsWinPe
+            ? $"/store {QuoteArgument(FindSelectedBcdStore()!)} /set {{default}} safeboot minimal"
+            : "/set {current} safeboot minimal";
+    }
+
+    private string GetSafeModeDeleteArguments()
+    {
+        return _session.IsWinPe
+            ? $"/store {QuoteArgument(FindSelectedBcdStore()!)} /deletevalue {{default}} safeboot"
+            : "/deletevalue {current} safeboot";
+    }
+
+    private static (int ExitCode, string Output) RunBcdEdit(string arguments)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "bcdedit.exe",
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.Default,
+                StandardErrorEncoding = Encoding.Default,
+            },
+        };
+
+        process.Start();
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, output + error);
     }
 
     private void RestartComputer()

@@ -216,8 +216,15 @@ public sealed class FileSearchForm : Form
 
         var menu = new ContextMenuStrip();
         UiTheme.StyleContextMenu(menu);
-        menu.Items.Add("Открыть в проводнике iUnlocker", null, (_, _) => OpenSelectedResult());
-        menu.Items.Add("Копировать путь", null, (_, _) => CopySelectedPath());
+        var openMenuItem = menu.Items.Add("Открыть в проводнике iUnlocker", null, (_, _) => OpenSelectedResult());
+        var copyMenuItem = menu.Items.Add("Копировать путь", null, (_, _) => CopySelectedPath());
+        menu.Opening += (_, e) =>
+        {
+            var hasSelection = GetSelectedResult() is not null;
+            openMenuItem.Enabled = hasSelection;
+            copyMenuItem.Enabled = hasSelection;
+            UiTheme.HideUnavailableContextMenuItems(menu);
+        };
         _results.ContextMenuStrip = menu;
 
         _statusLabel.AutoSize = true;

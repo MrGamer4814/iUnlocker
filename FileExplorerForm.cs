@@ -168,10 +168,10 @@ public sealed class FileExplorerForm : Form
                 _quarantineMenuItem.Enabled = false;
             }
 
-            e.Cancel = !hasSelection;
+            UiTheme.HideUnavailableContextMenuItems(_fileMenu);
         };
 
-        _openMenuItem.Font = new Font(_fileMenu.Font, FontStyle.Bold);
+        _openMenuItem.Font = AppFonts.Create(_fileMenu.Font.Size, FontStyle.Bold);
         _openMenuItem.Click += (_, _) => OpenSelectedItem();
         _copyPathMenuItem.Click += (_, _) => CopySelectedPath();
         _cutMenuItem.Click += (_, _) => SetSelectedItemClipboard(cut: true);

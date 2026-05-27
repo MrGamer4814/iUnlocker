@@ -11,6 +11,7 @@ static class Program
         // To customize application configuration such as set high DPI settings or default font,
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
+        Application.SetDefaultFont(AppFonts.Create(9F));
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, args) => ShowUnhandledException(args.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
@@ -21,14 +22,25 @@ static class Program
             }
         };
 
-        using var diskSelection = new DiskSelectionForm();
-        if (diskSelection.ShowDialog() != DialogResult.OK || diskSelection.SelectedSession is null)
+        var session = AppSession.DetectWinPe()
+            ? SelectWinPeSession()
+            : AppSession.CreateForCurrentWindows();
+
+        if (session is null)
         {
             return;
         }
 
-        Application.Run(new MainMenuForm(diskSelection.SelectedSession));
+        Application.Run(new MainMenuForm(session));
     }    
+
+    private static AppSession? SelectWinPeSession()
+    {
+        using var diskSelection = new DiskSelectionForm();
+        return diskSelection.ShowDialog() == DialogResult.OK
+            ? diskSelection.SelectedSession
+            : null;
+    }
 
     private static void ShowUnhandledException(Exception exception)
     {

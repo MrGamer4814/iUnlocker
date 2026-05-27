@@ -160,7 +160,11 @@ public sealed class TaskManagerForm : Form
         _openLocationMenuItem.Click += (_, _) => OpenSelectedLocationInIUnlocker();
         _propertiesMenuItem.Click += (_, _) => ShowSelectedProperties();
         _copyMenuItem.Click += (_, _) => CopySelectedProcess();
-        _processMenu.Opening += (_, _) => UpdateProcessMenu();
+        _processMenu.Opening += (_, e) =>
+        {
+            UpdateProcessMenu();
+            UiTheme.HideUnavailableContextMenuItems(_processMenu);
+        };
         _processMenu.Items.AddRange(new ToolStripItem[]
         {
             _terminateMenuItem,

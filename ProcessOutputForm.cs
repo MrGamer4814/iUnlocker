@@ -31,7 +31,7 @@ public sealed class ProcessOutputForm : Form
         _outputBox.BackColor = Color.FromArgb(16, 18, 24);
         _outputBox.ForeColor = Color.FromArgb(229, 231, 235);
         _outputBox.BorderStyle = BorderStyle.FixedSingle;
-        _outputBox.Font = new Font("Consolas", 10F, FontStyle.Regular);
+        _outputBox.Font = AppFonts.Create(10F);
 
         _closeButton.Text = "Закрыть";
         _closeButton.AutoSize = true;

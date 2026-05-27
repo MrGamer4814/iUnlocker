@@ -12,6 +12,8 @@
     <Version>1.0.1</Version>
     <FileVersion>1.0.1.0</FileVersion>
     <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <InformationalVersion>1.0.1</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <AssemblyTitle>iUnlocker</AssemblyTitle>
     <Product>iUnlocker</Product>
     <Description>iUnlocker</Description>

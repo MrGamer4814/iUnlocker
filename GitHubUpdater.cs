@@ -89,36 +89,51 @@ public static class GitHubUpdater
     public static void StartSelfReplace(string downloadedFilePath)
     {
         var currentExecutable = Environment.ProcessPath ?? Application.ExecutablePath;
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"iUnlocker-update-{Guid.NewGuid():N}.cmd");
-        var script = $"""
-@echo off
-setlocal
-set "SOURCE={downloadedFilePath}"
-set "TARGET={currentExecutable}"
-set "PID={Environment.ProcessId}"
-:wait
-tasklist /FI "PID eq %PID%" | find "%PID%" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto wait
-)
-copy /Y "%SOURCE%" "%TARGET%" >nul
-if errorlevel 1 (
-    start "" "%TARGET%"
-    exit /b 1
-)
-start "" "%TARGET%"
-del "%SOURCE%" >nul 2>nul
-del "%~f0" >nul 2>nul
-""";
+        var installDirectory = Path.GetDirectoryName(currentExecutable) ?? AppContext.BaseDirectory;
+        var targetExecutable = Path.Combine(installDirectory, "iUnlocker.exe");
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"iUnlocker-update-{Guid.NewGuid():N}.ps1");
+        var script = string.Join(Environment.NewLine, new[]
+        {
+            "$ErrorActionPreference = 'Stop'",
+            $"$source = {PowerShellString(downloadedFilePath)}",
+            $"$target = {PowerShellString(targetExecutable)}",
+            $"$old = {PowerShellString(currentExecutable)}",
+            $"$pidToWait = {Environment.ProcessId}",
+            string.Empty,
+            "while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) {",
+            "    Start-Sleep -Milliseconds 500",
+            "}",
+            string.Empty,
+            "Copy-Item -LiteralPath $source -Destination $target -Force",
+            string.Empty,
+            "if ($old -ne $target) {",
+            "    Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue",
+            "}",
+            string.Empty,
+            "Start-Process -FilePath $target -WorkingDirectory (Split-Path -Parent $target)",
+            "Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue",
+            "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue",
+        });
 
-        File.WriteAllText(scriptPath, script, Encoding.Default);
+        File.WriteAllText(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         Process.Start(new ProcessStartInfo
         {
-            FileName = scriptPath,
-            UseShellExecute = true,
+            FileName = "powershell.exe",
+            Arguments = $"-NoProfile -ExecutionPolicy Bypass -File {PowerShellArgument(scriptPath)}",
+            UseShellExecute = false,
+            CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden,
         });
+    }
+
+    private static string PowerShellString(string value)
+    {
+        return $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
+    }
+
+    private static string PowerShellArgument(string value)
+    {
+        return $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
     }
 
     private static GitHubUpdateSettings LoadSettings()

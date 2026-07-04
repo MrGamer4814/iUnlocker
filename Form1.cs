@@ -25,6 +25,8 @@ public partial class Form1 : Form
     private readonly ToolStripMenuItem _editScheduledTaskMenuItem = new("Изменить задачу");
     private readonly ToolStripMenuItem _deleteStartupMenuItem = new("Удалить запись");
     private readonly ToolStripMenuItem _openInIUnlockerExplorerMenuItem = new("Открыть файл в проводнике iUnlocker");
+    private readonly ToolStripMenuItem _disableServiceMenuItem = new("Отключить");
+    private readonly ToolStripMenuItem _serviceStartTypeMenuItem = new("Тип запуска");
     private readonly FlowLayoutPanel _tabsPanel = new();
 
     private const string SuspiciousTab = "Подозрительное";
@@ -121,8 +123,16 @@ public partial class Form1 : Form
         AddColumn("Name", "Название", 180);
         AddColumn("Type", "Тип", 110);
         AddColumn("Scope", "Область", 130);
+        AddColumn("StartType", "Тип запуска", 110);
+        AddColumn("RiskLevel", "Риск", 90);
+        AddColumn("RiskDetails", "Причина", 220);
         AddColumn("SignatureStatus", "Подпись", 140);
         AddColumn("SignaturePublisher", "Издатель", 190);
+        AddColumn("TaskTriggers", "Триггеры", 220);
+        AddColumn("TaskLastRun", "Последний запуск", 140);
+        AddColumn("TaskNextRun", "Следующий запуск", 140);
+        AddColumn("TaskAuthor", "Автор", 160);
+        AddColumn("TaskHidden", "Скрытая", 80);
         AddColumn("Command", "Команда", 440);
         AddColumn("Location", "Расположение", 420);
 
@@ -134,6 +144,12 @@ public partial class Form1 : Form
         _editScheduledTaskMenuItem.Click += (_, _) => EditSelectedScheduledTask();
         _deleteStartupMenuItem.Click += (_, _) => DeleteSelectedStartupEntry();
         _openInIUnlockerExplorerMenuItem.Click += (_, _) => OpenSelectedInIUnlockerExplorer();
+        _disableServiceMenuItem.Click += (_, _) => SetSelectedServiceStartType(4);
+        AddStartTypeMenuItem("Boot", 0);
+        AddStartTypeMenuItem("System", 1);
+        AddStartTypeMenuItem("Automatic", 2);
+        AddStartTypeMenuItem("Manual", 3);
+        AddStartTypeMenuItem("Disabled", 4);
         _contextMenu.Opening += (_, e) =>
         {
             UpdateActions();
@@ -149,6 +165,8 @@ public partial class Form1 : Form
             _editRegistryMenuItem,
             _openInIUnlockerRegistryMenuItem,
             _editScheduledTaskMenuItem,
+            _disableServiceMenuItem,
+            _serviceStartTypeMenuItem,
             _deleteStartupMenuItem,
         });
         _grid.ContextMenuStrip = _contextMenu;
@@ -214,6 +232,16 @@ public partial class Form1 : Form
         });
     }
 
+    private void AddStartTypeMenuItem(string title, int value)
+    {
+        var item = new ToolStripMenuItem(title)
+        {
+            Tag = value,
+        };
+        item.Click += (_, _) => SetSelectedServiceStartType(value);
+        _serviceStartTypeMenuItem.DropDownItems.Add(item);
+    }
+
     private static Bitmap CreateTaskLibraryIcon()
     {
         var bitmap = CreateTaskFolderIcon();
@@ -258,7 +286,7 @@ public partial class Form1 : Form
             var result = _session.IsWinPe && _session.WindowsPath is not null && !IsWinPeDrive(_session.DriveRoot)
                 ? OfflineStartupScanner.Scan(_session)
                 : StartupScanner.Scan();
-            _entries = result.Entries.Select(AddSignatureInfo).ToList();
+            _entries = result.Entries.Select(AddSignatureInfo).Select(StartupRiskAnalyzer.Analyze).ToList();
             _warnings = result.Warnings.ToList();
             _scheduledTaskFolders = result.ScheduledTaskFolders.ToList();
             UpdateCategoryTabs();
@@ -306,9 +334,17 @@ public partial class Form1 : Form
                 Contains(entry.Category, query) ||
                 Contains(entry.Type, query) ||
                 Contains(entry.Scope, query) ||
+                Contains(entry.StartType, query) ||
                 Contains(entry.Source, query) ||
+                Contains(entry.RiskLevel, query) ||
+                Contains(entry.RiskDetails, query) ||
                 Contains(entry.SignatureStatus, query) ||
                 Contains(entry.SignaturePublisher, query) ||
+                Contains(entry.TaskTriggers, query) ||
+                Contains(entry.TaskLastRun, query) ||
+                Contains(entry.TaskNextRun, query) ||
+                Contains(entry.TaskAuthor, query) ||
+                Contains(entry.TaskHidden, query) ||
                 Contains(entry.Command, query) ||
                 Contains(entry.Location, query));
         }
@@ -367,8 +403,16 @@ public partial class Form1 : Form
             nameof(StartupEntry.Name) => entry.Name,
             nameof(StartupEntry.Type) => entry.Type,
             nameof(StartupEntry.Scope) => entry.Scope,
+            nameof(StartupEntry.StartType) => entry.StartType,
+            nameof(StartupEntry.RiskLevel) => entry.RiskLevel,
+            nameof(StartupEntry.RiskDetails) => entry.RiskDetails,
             nameof(StartupEntry.SignatureStatus) => entry.SignatureStatus,
             nameof(StartupEntry.SignaturePublisher) => entry.SignaturePublisher,
+            nameof(StartupEntry.TaskTriggers) => entry.TaskTriggers,
+            nameof(StartupEntry.TaskLastRun) => entry.TaskLastRun,
+            nameof(StartupEntry.TaskNextRun) => entry.TaskNextRun,
+            nameof(StartupEntry.TaskAuthor) => entry.TaskAuthor,
+            nameof(StartupEntry.TaskHidden) => entry.TaskHidden,
             nameof(StartupEntry.Command) => entry.Command,
             nameof(StartupEntry.Location) => entry.Location,
             _ => string.Empty,
@@ -675,61 +719,27 @@ public partial class Form1 : Form
     {
         foreach (DataGridViewRow row in _grid.Rows)
         {
-            if (row.DataBoundItem is not StartupEntry entry || !IsSuspicious(entry))
+            if (row.DataBoundItem is not StartupEntry entry)
             {
                 continue;
             }
 
-            row.DefaultCellStyle.BackColor = Color.FromArgb(255, 248, 220);
-            row.DefaultCellStyle.ForeColor = Color.FromArgb(90, 55, 0);
+            if (entry.RiskLevel.Equals("Высокий", StringComparison.OrdinalIgnoreCase))
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 224, 224);
+                row.DefaultCellStyle.ForeColor = Color.FromArgb(120, 30, 30);
+            }
+            else if (entry.RiskLevel.Equals("Средний", StringComparison.OrdinalIgnoreCase))
+            {
+                row.DefaultCellStyle.BackColor = Color.FromArgb(255, 248, 220);
+                row.DefaultCellStyle.ForeColor = Color.FromArgb(90, 55, 0);
+            }
         }
     }
 
     private static bool IsSuspicious(StartupEntry entry)
     {
-        var text = $"{entry.Command} {entry.Location}";
-        var lower = text.ToLowerInvariant();
-        var riskyLocations = new[]
-        {
-            @"\appdata\",
-            @"\temp\",
-            @"\downloads\",
-            @"\users\public\",
-            @"\programdata\",
-            @"\recycler\",
-            @"\$recycle.bin\",
-        };
-        var riskyTools = new[]
-        {
-            "powershell",
-            "pwsh",
-            "wscript",
-            "cscript",
-            "mshta",
-            "rundll32",
-            "regsvr32",
-            "cmd.exe /c",
-        };
-        var scriptExtensions = new[] { ".ps1", ".vbs", ".js", ".jse", ".wsf", ".bat", ".cmd", ".scr" };
-
-        var badSignature = entry.SignatureStatus.Contains("поврежд", StringComparison.OrdinalIgnoreCase) ||
-                           entry.SignatureStatus.Contains("Запрещ", StringComparison.OrdinalIgnoreCase);
-
-        if (badSignature ||
-            riskyLocations.Any(lower.Contains) ||
-            riskyTools.Any(lower.Contains) ||
-            scriptExtensions.Any(lower.Contains) ||
-            lower.Contains("http://") ||
-            lower.Contains("https://"))
-        {
-            return true;
-        }
-
-        var target = TryGetExistingTargetPath(entry);
-        return target is null &&
-               !entry.Location.StartsWith("HK", StringComparison.OrdinalIgnoreCase) &&
-               !entry.Location.StartsWith("Offline", StringComparison.OrdinalIgnoreCase) &&
-               !entry.Location.StartsWith("Task Scheduler:", StringComparison.OrdinalIgnoreCase);
+        return StartupRiskAnalyzer.IsSuspicious(entry);
     }
 
     private StartupEntry? GetSelectedEntry()
@@ -770,7 +780,7 @@ public partial class Form1 : Form
             return;
         }
 
-        Clipboard.SetText($"{entry.Category}\t{entry.Name}\t{entry.Type}\t{entry.Scope}\t{entry.SignatureStatus}\t{entry.SignaturePublisher}\t{entry.Source}\t{entry.Command}\t{entry.Location}");
+        Clipboard.SetText($"{entry.Category}\t{entry.Name}\t{entry.Type}\t{entry.Scope}\t{entry.StartType}\t{entry.RiskLevel}\t{entry.RiskDetails}\t{entry.SignatureStatus}\t{entry.SignaturePublisher}\t{entry.TaskTriggers}\t{entry.TaskLastRun}\t{entry.TaskNextRun}\t{entry.TaskAuthor}\t{entry.TaskHidden}\t{entry.Source}\t{entry.Command}\t{entry.Location}");
         _statusLabel.Text = "Строка скопирована в буфер обмена.";
     }
 
@@ -1319,6 +1329,83 @@ public partial class Form1 : Form
         });
     }
 
+    private void SetSelectedServiceStartType(int startValue)
+    {
+        var entry = GetSelectedEntry();
+        if (entry is null || !CanEditServiceStart(entry))
+        {
+            return;
+        }
+
+        var text = startValue switch
+        {
+            0 => "Boot",
+            1 => "System",
+            2 => "Automatic",
+            3 => "Manual",
+            4 => "Disabled",
+            _ => startValue.ToString(),
+        };
+
+        if (MessageBox.Show(
+                this,
+                $"Изменить тип запуска для \"{entry.Name}\" на {text}?",
+                "Службы и драйверы",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            SetServiceStart(entry, startValue);
+            _statusLabel.Text = $"Тип запуска изменён: {entry.Name} -> {text}.";
+            RefreshEntries();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                ex.Message,
+                "Не удалось изменить тип запуска",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
+    private static void SetServiceStart(StartupEntry entry, int startValue)
+    {
+        if (!CanEditServiceStart(entry))
+        {
+            throw new InvalidOperationException("Для этой записи нельзя изменить тип запуска.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.OfflineRegistryHiveFile) &&
+            !string.IsNullOrWhiteSpace(entry.OfflineRegistryMountPrefix) &&
+            !string.IsNullOrWhiteSpace(entry.RegistryKeyPath))
+        {
+            OfflineRegistryEditor.SetValue(
+                entry.OfflineRegistryHiveFile,
+                entry.OfflineRegistryMountPrefix,
+                entry.RegistryKeyPath,
+                "Start",
+                startValue,
+                RegistryValueKind.DWord);
+            return;
+        }
+
+        if (entry.RegistryHive is null || string.IsNullOrWhiteSpace(entry.RegistryKeyPath))
+        {
+            throw new InvalidOperationException("Для этой записи нет пути к Services.");
+        }
+
+        using var baseKey = RegistryKey.OpenBaseKey(entry.RegistryHive.Value, entry.RegistryView);
+        using var key = baseKey.OpenSubKey(entry.RegistryKeyPath, writable: true)
+            ?? throw new InvalidOperationException("Ключ службы/драйвера не найден или недоступен для записи.");
+        key.SetValue("Start", startValue, RegistryValueKind.DWord);
+    }
+
     private void UpdateActions()
     {
         var entry = GetSelectedEntry();
@@ -1332,6 +1419,11 @@ public partial class Form1 : Form
         _editScheduledTaskMenuItem.Enabled = entry?.CanEditScheduledTask == true;
         _deleteStartupMenuItem.Enabled = hasSelection && CanDeleteStartupEntry(entry!);
         _openInIUnlockerExplorerMenuItem.Enabled = hasSelection && TryGetExistingTargetPath(entry!) is not null;
+        _disableServiceMenuItem.Enabled = entry is not null && CanEditServiceStart(entry);
+        _serviceStartTypeMenuItem.Enabled = entry is not null && CanEditServiceStart(entry);
+        _disableServiceMenuItem.Text = entry?.Category.Equals("Drivers", StringComparison.OrdinalIgnoreCase) == true
+            ? "Отключить драйвер"
+            : "Отключить службу";
     }
 
     private static bool CanDeleteStartupEntry(StartupEntry entry)
@@ -1350,5 +1442,12 @@ public partial class Form1 : Form
     {
         return entry.Category.Equals("Services", StringComparison.OrdinalIgnoreCase) ||
                entry.Category.Equals("Drivers", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CanEditServiceStart(StartupEntry entry)
+    {
+        return IsServiceOrDriverEntry(entry) &&
+               !string.IsNullOrWhiteSpace(entry.RegistryKeyPath) &&
+               (entry.RegistryHive is not null || !string.IsNullOrWhiteSpace(entry.OfflineRegistryHiveFile));
     }
 }

@@ -9,13 +9,48 @@ internal static class BcdUtility
 {
     public static string? FindSelectedBcdStore(AppSession session)
     {
-        var candidates = new[]
-        {
-            Path.Combine(session.DriveRoot, "Boot", "BCD"),
-            Path.Combine(session.DriveRoot, "EFI", "Microsoft", "Boot", "BCD"),
-        };
+        return EnumerateBcdStoreCandidates(session).FirstOrDefault(File.Exists);
+    }
 
-        return candidates.FirstOrDefault(File.Exists);
+    public static IReadOnlyList<string> GetBcdStoreCandidates(AppSession session)
+    {
+        return EnumerateBcdStoreCandidates(session).Where(File.Exists).ToList();
+    }
+
+    private static IEnumerable<string> EnumerateBcdStoreCandidates(AppSession session)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in GetPrimaryBcdCandidates(session.DriveRoot))
+        {
+            if (seen.Add(candidate))
+            {
+                yield return candidate;
+            }
+        }
+
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            if (!drive.IsReady ||
+                (session.IsWinPe && drive.RootDirectory.FullName.StartsWith("X:", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            foreach (var candidate in GetPrimaryBcdCandidates(drive.RootDirectory.FullName))
+            {
+                if (seen.Add(candidate))
+                {
+                    yield return candidate;
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<string> GetPrimaryBcdCandidates(string driveRoot)
+    {
+        yield return Path.Combine(driveRoot, "Boot", "BCD");
+        yield return Path.Combine(driveRoot, "EFI", "Microsoft", "Boot", "BCD");
+        yield return Path.Combine(driveRoot, "Microsoft", "Boot", "BCD");
     }
 
     public static string GetEnumAllArguments(AppSession session)

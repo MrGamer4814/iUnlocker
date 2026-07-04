@@ -20,8 +20,16 @@ public sealed record StartupEntry(
     string? OfflineRegistryMountPrefix = null,
     string? ScheduledTaskPath = null,
     string? OfflineScheduledTaskFile = null,
+    string StartType = "",
     string SignatureStatus = "",
-    string SignaturePublisher = "")
+    string SignaturePublisher = "",
+    string RiskLevel = "",
+    string RiskDetails = "",
+    string TaskTriggers = "",
+    string TaskLastRun = "",
+    string TaskNextRun = "",
+    string TaskAuthor = "",
+    string TaskHidden = "")
 {
     public bool CanEditRegistry =>
         (RegistryHive is not null &&

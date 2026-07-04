@@ -16,17 +16,22 @@ public sealed class AdditionalFunctionsForm : Form
     private readonly Button _restoreFontsButton = new();
     private readonly Button _cleanTempButton = new();
     private readonly Button _sfcScanButton = new();
+    private readonly Button _sfcFileButton = new();
     private readonly Button _dismCheckHealthButton = new();
     private readonly Button _dismScanHealthButton = new();
     private readonly Button _dismRestoreHealthButton = new();
     private readonly Button _chkdskButton = new();
     private readonly Button _bootCheckButton = new();
+    private readonly Button _bootRepairButton = new();
     private readonly Button _bcdCheckButton = new();
+    private readonly Button _eventLogButton = new();
+    private readonly Button _bsodAnalyzerButton = new();
     private readonly Button _exportReportButton = new();
     private readonly Button _resetSecurityPolicyButton = new();
     private readonly Button _disableTestModeButton = new();
     private readonly Button _verifySignaturesButton = new();
     private readonly Button _enableUacButton = new();
+    private readonly Button _serviceRepairButton = new();
     private readonly Button _restartButton = new();
     private readonly Button _restartSafeModeButton = new();
     private readonly Button _shutdownButton = new();
@@ -130,6 +135,10 @@ public sealed class AdditionalFunctionsForm : Form
             "SFC /scannow выбранной Windows",
             (_, _) => RunSfcScan());
         ConfigureActionButton(
+            _sfcFileButton,
+            "Проверить системный файл",
+            (_, _) => RunSelectedFileSfcScan());
+        ConfigureActionButton(
             _dismCheckHealthButton,
             "DISM CheckHealth",
             (_, _) => RunDismHealth("CheckHealth"));
@@ -150,9 +159,21 @@ public sealed class AdditionalFunctionsForm : Form
             "Проверка загрузчика выбранной Windows",
             (_, _) => RunBootloaderCheck());
         ConfigureActionButton(
+            _bootRepairButton,
+            "Восстановить загрузчик",
+            (_, _) => OpenBootRepair());
+        ConfigureActionButton(
             _bcdCheckButton,
             "Проверка BCD",
             (_, _) => OpenBcdCheck());
+        ConfigureActionButton(
+            _eventLogButton,
+            "Журнал событий",
+            (_, _) => OpenEventLogViewer());
+        ConfigureActionButton(
+            _bsodAnalyzerButton,
+            "Анализ BSOD",
+            (_, _) => OpenBsodAnalyzer());
         ConfigureActionButton(
             _exportReportButton,
             "Экспорт отчёта",
@@ -174,6 +195,10 @@ public sealed class AdditionalFunctionsForm : Form
             "Включить UAC",
             (_, _) => EnableUac());
         ConfigureActionButton(
+            _serviceRepairButton,
+            "Восстановить службы Windows",
+            (_, _) => OpenServiceRepair());
+        ConfigureActionButton(
             _restartButton,
             "Перезагрузка компьютера",
             (_, _) => RestartComputer());
@@ -191,7 +216,9 @@ public sealed class AdditionalFunctionsForm : Form
         _replaceAccessibilityButton.Enabled = offlineWindows;
         _offlineDriversButton.Enabled = offlineWindows;
         _setCmdLineButton.Enabled = CanSetCmdLine();
-        _bootCheckButton.Enabled = _session.IsWinPe;
+        _bootCheckButton.Enabled = CanUseSelectedOfflineBcd();
+        _bootRepairButton.Enabled = IsOfflineWindowsSelected();
+        _disableTestModeButton.Enabled = !_session.IsWinPe || CanUseSelectedOfflineBcd();
         _resetSecurityPolicyButton.Enabled = IsCurrentWindowsSelected();
         UpdateAccessibilityButtonState();
         UpdateCmdLineButtonState();
@@ -208,11 +235,12 @@ public sealed class AdditionalFunctionsForm : Form
         var recoveryPage = CreateActionPage();
         AddActionButton(recoveryPage, _restoreLogonUiButton, 0, 0);
         AddActionButton(recoveryPage, _sfcScanButton, 1, 0);
-        AddActionButton(recoveryPage, _dismCheckHealthButton, 0, 1);
-        AddActionButton(recoveryPage, _dismScanHealthButton, 1, 1);
-        AddActionButton(recoveryPage, _dismRestoreHealthButton, 0, 2, columnSpan: 2);
-        AddActionButton(recoveryPage, _chkdskButton, 0, 3, columnSpan: 2);
-        AddActionButton(recoveryPage, _restoreFontsButton, 0, 4, columnSpan: 2);
+        AddActionButton(recoveryPage, _sfcFileButton, 0, 1, columnSpan: 2);
+        AddActionButton(recoveryPage, _dismCheckHealthButton, 0, 2);
+        AddActionButton(recoveryPage, _dismScanHealthButton, 1, 2);
+        AddActionButton(recoveryPage, _dismRestoreHealthButton, 0, 3, columnSpan: 2);
+        AddActionButton(recoveryPage, _chkdskButton, 0, 4, columnSpan: 2);
+        AddActionButton(recoveryPage, _restoreFontsButton, 0, 5, columnSpan: 2);
         AddTab(tabs, "Восстановление", recoveryPage);
 
         var securityPage = CreateActionPage();
@@ -220,9 +248,12 @@ public sealed class AdditionalFunctionsForm : Form
         AddActionButton(securityPage, _resetSecurityPolicyButton, 1, 0);
         AddActionButton(securityPage, _disableTestModeButton, 0, 1);
         AddActionButton(securityPage, _verifySignaturesButton, 1, 1);
-        AddActionButton(securityPage, _bootCheckButton, 0, 2, columnSpan: 2);
+        AddActionButton(securityPage, _bootCheckButton, 0, 2);
+        AddActionButton(securityPage, _bootRepairButton, 1, 2);
         AddActionButton(securityPage, _bcdCheckButton, 0, 3);
-        AddActionButton(securityPage, _exportReportButton, 1, 3);
+        AddActionButton(securityPage, _eventLogButton, 1, 3);
+        AddActionButton(securityPage, _bsodAnalyzerButton, 0, 4);
+        AddActionButton(securityPage, _exportReportButton, 1, 4);
         AddTab(tabs, "Безопасность", securityPage);
 
         var accessPage = CreateActionPage();
@@ -231,6 +262,7 @@ public sealed class AdditionalFunctionsForm : Form
         AddActionButton(accessPage, _rescueLogonButton, 0, 1, columnSpan: 2);
         AddActionButton(accessPage, _offlineDriversButton, 0, 2);
         AddActionButton(accessPage, _cleanTempButton, 1, 2);
+        AddActionButton(accessPage, _serviceRepairButton, 0, 3, columnSpan: 2);
         AddTab(tabs, "Система", accessPage);
 
         var powerPage = CreateActionPage();
@@ -255,13 +287,13 @@ public sealed class AdditionalFunctionsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 5,
+            RowCount = 6,
             Padding = new Padding(12),
             BackColor = UiTheme.Surface,
         };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        for (var index = 0; index < 5; index++)
+        for (var index = 0; index < 6; index++)
         {
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
         }
@@ -945,6 +977,71 @@ public sealed class AdditionalFunctionsForm : Form
         }
     }
 
+    private void RunSelectedFileSfcScan()
+    {
+        if (string.IsNullOrWhiteSpace(_session.WindowsPath) || !Directory.Exists(_session.WindowsPath))
+        {
+            MessageBox.Show(
+                this,
+                "На выбранном диске не найдена папка Windows.",
+                "Проверка системного файла",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Выберите системный файл",
+            InitialDirectory = Directory.Exists(Path.Combine(_session.WindowsPath, "System32"))
+                ? Path.Combine(_session.WindowsPath, "System32")
+                : _session.WindowsPath,
+            Filter = "Системные файлы (*.exe;*.dll;*.sys;*.mui)|*.exe;*.dll;*.sys;*.mui|Все файлы (*.*)|*.*",
+            CheckFileExists = true,
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        if (!dialog.FileName.StartsWith(_session.WindowsPath, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(
+                this,
+                "Выберите файл внутри выбранной папки Windows.",
+                "Проверка системного файла",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        var arguments = IsCurrentWindowsSelected()
+            ? $"/scanfile={QuoteArgument(dialog.FileName)}"
+            : $"/scanfile={QuoteArgument(dialog.FileName)} /offbootdir={QuoteArgument(EnsureTrailingSlash(_session.DriveRoot))} /offwindir={QuoteArgument(_session.WindowsPath)}";
+
+        if (MessageBox.Show(
+                this,
+                $"Запустить точечную проверку файла через SFC?\r\n\r\n{dialog.FileName}",
+                "Проверка системного файла",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            StartVisibleCmdCommand("iUnlocker SFC file", $"sfc.exe {arguments}");
+            SetStatus($"Точечная проверка SFC запущена: {dialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Проверка файла не запущена: {ex.Message}");
+            MessageBox.Show(this, ex.Message, "Проверка системного файла", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     private void RunDismHealth(string mode)
     {
         if (string.IsNullOrWhiteSpace(_session.WindowsPath) || !Directory.Exists(_session.WindowsPath))
@@ -1017,19 +1114,25 @@ public sealed class AdditionalFunctionsForm : Form
 
     private void RunBootloaderCheck()
     {
-        if (!_session.IsWinPe)
+        if (!CanUseSelectedOfflineBcd())
         {
             MessageBox.Show(
                 this,
-            "Проверка загрузчика выбранной Windows доступна только из WinPE.",
+                "BCD выбранной Windows не найден. В WinPE выберите диск с установленной Windows.",
                 "Проверка загрузчика",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
         }
 
-        var command = "bcdedit /enum all & echo. & bootrec /scanos";
-        if (MessageBox.Show(this, "Запустить проверку загрузчика выбранной Windows?\r\n\r\nБудут выполнены bcdedit /enum all и bootrec /scanos.", "Проверка загрузчика", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        var store = FindSelectedBcdStore()!;
+        var command = $@"bcdedit /store ""{store}"" /enum all & echo. & bootrec /scanos";
+        if (MessageBox.Show(
+                this,
+                $"Запустить проверку загрузчика выбранной Windows?\r\n\r\nBCD: {store}\r\n\r\nБудут выполнены bcdedit /store ... /enum all и bootrec /scanos.",
+                "Проверка загрузчика",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
         {
             return;
         }
@@ -1056,6 +1159,69 @@ public sealed class AdditionalFunctionsForm : Form
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "Проверка BCD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void OpenBootRepair()
+    {
+        if (!IsOfflineWindowsSelected())
+        {
+            MessageBox.Show(
+                this,
+                "Восстановление загрузчика доступно только в WinPE при выбранном диске с установленной Windows.",
+                "Восстановление загрузчика",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            var form = new BootRepairForm(_session);
+            form.Show(this);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Восстановление загрузчика", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void OpenEventLogViewer()
+    {
+        try
+        {
+            var form = new EventLogViewerForm(_session);
+            form.Show(this);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Журнал событий", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void OpenBsodAnalyzer()
+    {
+        try
+        {
+            var form = new BsodAnalyzerForm(_session);
+            form.Show(this);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Анализ BSOD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void OpenServiceRepair()
+    {
+        try
+        {
+            var form = new ServiceRepairForm(_session);
+            form.Show(this);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Восстановление служб", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -1426,6 +1592,17 @@ public sealed class AdditionalFunctionsForm : Form
 
     private void DisableTestMode()
     {
+        if (_session.IsWinPe && !CanUseSelectedOfflineBcd())
+        {
+            MessageBox.Show(
+                this,
+                "BCD выбранной Windows не найден. В WinPE выберите диск с установленной Windows.",
+                "Отключить тестовый режим",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
         var command = GetDisableTestModeCommand();
         if (MessageBox.Show(this, $"Отключить тестовый режим загрузчика?\r\n\r\n{command}", "Отключить тестовый режим", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
         {
@@ -1671,6 +1848,11 @@ public sealed class AdditionalFunctionsForm : Form
             return true;
         }
 
+        return CanUseSelectedOfflineBcd();
+    }
+
+    private bool CanUseSelectedOfflineBcd()
+    {
         return IsOfflineWindowsSelected() && !string.IsNullOrWhiteSpace(FindSelectedBcdStore());
     }
 

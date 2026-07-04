@@ -333,7 +333,8 @@ public static class StartupScanner
                             $@"{target.DisplayHive}\SYSTEM\CurrentControlSet\Services\{serviceName} ({ViewName(target.View)})",
                             RegistryHive: target.Hive,
                             RegistryView: target.View,
-                            RegistryKeyPath: $@"SYSTEM\CurrentControlSet\Services\{serviceName}"));
+                            RegistryKeyPath: $@"SYSTEM\CurrentControlSet\Services\{serviceName}",
+                            StartType: scope));
                 }
             }
             catch (Exception ex) when (IsRegistryAccessException(ex))
@@ -482,6 +483,7 @@ public static class StartupScanner
 
             bool enabled = task.Enabled;
             var command = GetTaskCommand(definition.Actions);
+            var taskPath = Convert.ToString(task.Path);
 
             AddEntry(
                 entries,
@@ -494,7 +496,12 @@ public static class StartupScanner
                     "Планировщик",
                     command,
                     $"Task Scheduler: {task.Path}",
-                    ScheduledTaskPath: Convert.ToString(task.Path)));
+                    ScheduledTaskPath: taskPath,
+                    TaskTriggers: GetTaskTriggers(definition.Triggers),
+                    TaskLastRun: FormatComDate(task.LastRunTime),
+                    TaskNextRun: FormatComDate(task.NextRunTime),
+                    TaskAuthor: Convert.ToString(definition.RegistrationInfo.Author) ?? string.Empty,
+                    TaskHidden: GetTaskHiddenText(definition)));
         }
         catch
         {
@@ -530,6 +537,74 @@ public static class StartupScanner
         }
 
         return parts.Count == 0 ? "(команда не указана)" : string.Join("; ", parts);
+    }
+
+    private static string GetTaskTriggers(dynamic triggers)
+    {
+        var parts = new List<string>();
+        foreach (dynamic trigger in triggers)
+        {
+            try
+            {
+                int type = trigger.Type;
+                var typeText = type switch
+                {
+                    1 => "однократно",
+                    2 => "ежедневно",
+                    3 => "еженедельно",
+                    4 => "ежемесячно",
+                    5 => "ежемесячно по дням",
+                    6 => "при простое",
+                    7 => "при регистрации",
+                    8 => "при загрузке",
+                    9 => "при входе",
+                    11 => "по событию",
+                    12 => "при создании/изменении",
+                    _ => $"тип {type}",
+                };
+                string start = trigger.StartBoundary;
+                parts.Add(string.IsNullOrWhiteSpace(start) ? typeText : $"{typeText}: {start}");
+            }
+            catch
+            {
+                parts.Add("(триггер недоступен)");
+            }
+        }
+
+        return parts.Count == 0 ? "(нет триггеров)" : string.Join("; ", parts);
+    }
+
+    private static string GetTaskHiddenText(dynamic definition)
+    {
+        try
+        {
+            bool hidden = definition.Settings.Hidden;
+            return hidden ? "Да" : "Нет";
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string FormatComDate(object value)
+    {
+        try
+        {
+            if (value is DateTime dateTime && dateTime.Year > 1900)
+            {
+                return dateTime.ToString("yyyy-MM-dd HH:mm:ss");
+            }
+
+            var text = Convert.ToString(value) ?? string.Empty;
+            return DateTime.TryParse(text, out var parsed) && parsed.Year > 1900
+                ? parsed.ToString("yyyy-MM-dd HH:mm:ss")
+                : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static void AddWmiEntries(List<StartupEntry> entries, List<string> warnings, HashSet<string> seen)

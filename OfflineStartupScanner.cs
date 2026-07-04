@@ -275,6 +275,13 @@ public static class OfflineStartupScanner
                     })
                     .Where(command => !string.IsNullOrWhiteSpace(command))
                     .ToList();
+                var triggers = document.Descendants()
+                    .Where(node => node.Parent?.Name.LocalName == "Triggers")
+                    .Select(DescribeOfflineTrigger)
+                    .Where(trigger => !string.IsNullOrWhiteSpace(trigger))
+                    .ToList();
+                var author = document.Descendants().FirstOrDefault(node => node.Name.LocalName == "Author")?.Value ?? string.Empty;
+                var hidden = document.Descendants().FirstOrDefault(node => node.Name.LocalName == "Hidden")?.Value;
 
                 AddEntry(
                     entries,
@@ -287,13 +294,34 @@ public static class OfflineStartupScanner
                         "Планировщик offline",
                         commands.Count == 0 ? "(команда не указана)" : string.Join("; ", commands),
                         file,
-                        OfflineScheduledTaskFile: file));
+                        OfflineScheduledTaskFile: file,
+                        TaskTriggers: triggers.Count == 0 ? "(нет триггеров)" : string.Join("; ", triggers),
+                        TaskAuthor: author,
+                        TaskHidden: string.Equals(hidden, "true", StringComparison.OrdinalIgnoreCase) ? "Да" : "Нет"));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException)
             {
                 warnings.Add($"Не удалось прочитать задачу {file}: {ex.Message}");
             }
         }
+    }
+
+    private static string DescribeOfflineTrigger(XElement trigger)
+    {
+        var name = trigger.Name.LocalName switch
+        {
+            "TimeTrigger" => "по времени",
+            "CalendarTrigger" => "по календарю",
+            "BootTrigger" => "при загрузке",
+            "LogonTrigger" => "при входе",
+            "IdleTrigger" => "при простое",
+            "EventTrigger" => "по событию",
+            "RegistrationTrigger" => "при регистрации",
+            "SessionStateChangeTrigger" => "при смене сеанса",
+            _ => trigger.Name.LocalName,
+        };
+        var start = trigger.Elements().FirstOrDefault(node => node.Name.LocalName == "StartBoundary")?.Value;
+        return string.IsNullOrWhiteSpace(start) ? name : $"{name}: {start}";
     }
 
     private static string GetCurrentControlSet(OfflineRegistryHive hive)
@@ -352,7 +380,8 @@ public static class OfflineStartupScanner
                     $@"Offline SYSTEM\{controlSet}\Services\{serviceName}",
                     RegistryKeyPath: $@"{controlSet}\Services\{serviceName}",
                     OfflineRegistryHiveFile: hive.HiveFile,
-                    OfflineRegistryMountPrefix: hive.MountPrefix));
+                    OfflineRegistryMountPrefix: hive.MountPrefix,
+                    StartType: scope));
         }
     }
 

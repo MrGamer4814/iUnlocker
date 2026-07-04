@@ -30,6 +30,8 @@ internal static class OfflineReportExporter
         builder.AppendLine();
 
         AppendStartupReport(builder, session);
+        AppendBsodReport(builder, session);
+        AppendServiceRepairReport(builder, session);
         AppendBcdReport(builder, session);
 
         return builder.ToString();
@@ -38,6 +40,8 @@ internal static class OfflineReportExporter
     private static string BuildHtmlReport(AppSession session)
     {
         var startup = GetStartupReport(session);
+        var bsod = GetBsodReport(session);
+        var services = GetServiceRepairReport(session);
         var bcd = GetBcdReport(session);
         var builder = new StringBuilder();
 
@@ -85,10 +89,13 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
         AppendMetric(builder, "Диск", session.DriveRoot);
         AppendMetric(builder, "Windows", session.WindowsPath ?? "не найдена");
         AppendMetric(builder, "Автозагрузка", startup.Entries.Count.ToString());
+        AppendMetric(builder, "BSOD", bsod.Rows.Count.ToString());
         builder.AppendLine("</div>");
         builder.AppendLine("</section>");
 
         AppendStartupHtml(builder, startup);
+        AppendBsodHtml(builder, bsod);
+        AppendServiceRepairHtml(builder, services);
         AppendBcdHtml(builder, bcd);
 
         builder.AppendLine("</main>");
@@ -132,6 +139,14 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
                 builder.AppendLine($"  Type: {entry.Type}");
                 builder.AppendLine($"  Scope: {entry.Scope}");
                 builder.AppendLine($"  Source: {entry.Source}");
+                if (entry.Category == "Scheduled Task")
+                {
+                    builder.AppendLine($"  Triggers: {entry.TaskTriggers}");
+                    builder.AppendLine($"  Last run: {entry.TaskLastRun}");
+                    builder.AppendLine($"  Next run: {entry.TaskNextRun}");
+                    builder.AppendLine($"  Author: {entry.TaskAuthor}");
+                    builder.AppendLine($"  Hidden: {entry.TaskHidden}");
+                }
                 builder.AppendLine($"  Command: {entry.Command}");
                 builder.AppendLine($"  Location: {entry.Location}");
                 builder.AppendLine();
@@ -165,6 +180,54 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
         builder.AppendLine();
     }
 
+    private static void AppendBsodReport(StringBuilder builder, AppSession session)
+    {
+        builder.AppendLine("=== BSOD ===");
+        try
+        {
+            var rows = BsodAnalyzer.Analyze(session);
+            builder.AppendLine($"Entries: {rows.Count}");
+            foreach (var row in rows)
+            {
+                builder.AppendLine($"{row.TimeCreated} {row.DumpName}");
+                builder.AppendLine($"  BugCheck: {row.BugCheckCode} {row.BugCheckName}".TrimEnd());
+                builder.AppendLine($"  Suspect driver: {row.SuspectDriver} {row.Signature}".TrimEnd());
+                builder.AppendLine($"  Path: {row.Path}");
+                if (!string.IsNullOrWhiteSpace(row.EventSummary))
+                {
+                    builder.AppendLine($"  Event: {row.EventSummary}");
+                }
+                builder.AppendLine();
+            }
+        }
+        catch (Exception ex)
+        {
+            builder.AppendLine($"BSOD error: {ex.Message}");
+        }
+
+        builder.AppendLine();
+    }
+
+    private static void AppendServiceRepairReport(StringBuilder builder, AppSession session)
+    {
+        builder.AppendLine("=== Windows services ===");
+        try
+        {
+            var rows = WindowsServiceRepairUtility.Scan(session);
+            builder.AppendLine($"Checked: {rows.Count}");
+            foreach (var row in rows)
+            {
+                builder.AppendLine($"{row.Name}: {row.CurrentStart} -> recommended {row.RecommendedStart}. Status: {row.Status}");
+            }
+        }
+        catch (Exception ex)
+        {
+            builder.AppendLine($"Services error: {ex.Message}");
+        }
+
+        builder.AppendLine();
+    }
+
     private static StartupReportData GetStartupReport(AppSession session)
     {
         try
@@ -193,6 +256,30 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
         catch (Exception ex)
         {
             return new BcdReportData(BcdUtility.GetTargetText(session), -1, string.Empty, [], ex.Message);
+        }
+    }
+
+    private static BsodReportData GetBsodReport(AppSession session)
+    {
+        try
+        {
+            return new BsodReportData(BsodAnalyzer.Analyze(session), null);
+        }
+        catch (Exception ex)
+        {
+            return new BsodReportData([], ex.Message);
+        }
+    }
+
+    private static ServiceRepairReportData GetServiceRepairReport(AppSession session)
+    {
+        try
+        {
+            return new ServiceRepairReportData(WindowsServiceRepairUtility.Scan(session), null);
+        }
+        catch (Exception ex)
+        {
+            return new ServiceRepairReportData([], ex.Message);
         }
     }
 
@@ -240,7 +327,7 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
 
         builder.AppendLine("<div class=\"scroll\" style=\"margin-top:14px\">");
         builder.AppendLine("<table>");
-        builder.AppendLine("<thead><tr><th>Категория</th><th>Имя</th><th>Тип</th><th>Область</th><th>Команда</th><th>Расположение</th></tr></thead>");
+        builder.AppendLine("<thead><tr><th>Категория</th><th>Имя</th><th>Тип</th><th>Область</th><th>Триггеры</th><th>Последний</th><th>Следующий</th><th>Автор</th><th>Скрытая</th><th>Команда</th><th>Расположение</th></tr></thead>");
         builder.AppendLine("<tbody>");
         foreach (var entry in report.Entries.OrderBy(entry => entry.Category).ThenBy(entry => entry.Name))
         {
@@ -249,6 +336,11 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
             builder.AppendLine($"<td>{Html(entry.Name)}</td>");
             builder.AppendLine($"<td>{Html(entry.Type)}</td>");
             builder.AppendLine($"<td>{Html(entry.Scope)}</td>");
+            builder.AppendLine($"<td>{Html(entry.TaskTriggers)}</td>");
+            builder.AppendLine($"<td>{Html(entry.TaskLastRun)}</td>");
+            builder.AppendLine($"<td>{Html(entry.TaskNextRun)}</td>");
+            builder.AppendLine($"<td>{Html(entry.TaskAuthor)}</td>");
+            builder.AppendLine($"<td>{Html(entry.TaskHidden)}</td>");
             builder.AppendLine($"<td>{Html(entry.Command)}</td>");
             builder.AppendLine($"<td>{Html(entry.Location)}</td>");
             builder.AppendLine("</tr>");
@@ -297,6 +389,74 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
         builder.AppendLine("<div style=\"margin-top:14px\"><pre>");
         builder.AppendLine(Html(report.RawOutput));
         builder.AppendLine("</pre></div>");
+        builder.AppendLine("</section>");
+    }
+
+    private static void AppendBsodHtml(StringBuilder builder, BsodReportData report)
+    {
+        builder.AppendLine("<section class=\"card\">");
+        builder.AppendLine("<h2>BSOD</h2>");
+        if (!string.IsNullOrWhiteSpace(report.Error))
+        {
+            builder.AppendLine($"<div class=\"empty\">Ошибка: {Html(report.Error)}</div>");
+            builder.AppendLine("</section>");
+            return;
+        }
+
+        if (report.Rows.Count == 0)
+        {
+            builder.AppendLine("<div class=\"empty\">Дампы BSOD и события BugCheck не найдены.</div>");
+            builder.AppendLine("</section>");
+            return;
+        }
+
+        builder.AppendLine("<div class=\"scroll\">");
+        builder.AppendLine("<table>");
+        builder.AppendLine("<thead><tr><th>Дамп</th><th>Дата</th><th>BugCheck</th><th>Описание</th><th>Драйвер</th><th>Подпись</th><th>Путь</th></tr></thead>");
+        builder.AppendLine("<tbody>");
+        foreach (var row in report.Rows)
+        {
+            builder.AppendLine("<tr>");
+            builder.AppendLine($"<td>{Html(row.DumpName)}</td>");
+            builder.AppendLine($"<td>{Html(row.TimeCreated)}</td>");
+            builder.AppendLine($"<td>{Html(row.BugCheckCode)}</td>");
+            builder.AppendLine($"<td>{Html(row.BugCheckName)}</td>");
+            builder.AppendLine($"<td>{Html(row.SuspectDriver)}</td>");
+            builder.AppendLine($"<td>{Html(row.Signature)}</td>");
+            builder.AppendLine($"<td>{Html(row.Path)}</td>");
+            builder.AppendLine("</tr>");
+        }
+        builder.AppendLine("</tbody></table></div>");
+        builder.AppendLine("</section>");
+    }
+
+    private static void AppendServiceRepairHtml(StringBuilder builder, ServiceRepairReportData report)
+    {
+        builder.AppendLine("<section class=\"card\">");
+        builder.AppendLine("<h2>Службы Windows</h2>");
+        if (!string.IsNullOrWhiteSpace(report.Error))
+        {
+            builder.AppendLine($"<div class=\"empty\">Ошибка: {Html(report.Error)}</div>");
+            builder.AppendLine("</section>");
+            return;
+        }
+
+        builder.AppendLine("<div class=\"scroll\">");
+        builder.AppendLine("<table>");
+        builder.AppendLine("<thead><tr><th>Служба</th><th>Описание</th><th>Сейчас</th><th>Рекомендуется</th><th>Статус</th></tr></thead>");
+        builder.AppendLine("<tbody>");
+        foreach (var row in report.Rows)
+        {
+            var css = row.Status == "отличается" ? " class=\"warn\"" : row.Status == "нет службы" ? " class=\"bad\"" : string.Empty;
+            builder.AppendLine($"<tr{css}>");
+            builder.AppendLine($"<td>{Html(row.Name)}</td>");
+            builder.AppendLine($"<td>{Html(row.DisplayName)}</td>");
+            builder.AppendLine($"<td>{Html(row.CurrentStart)}</td>");
+            builder.AppendLine($"<td>{Html(row.RecommendedStart)}</td>");
+            builder.AppendLine($"<td>{Html(row.Status)}</td>");
+            builder.AppendLine("</tr>");
+        }
+        builder.AppendLine("</tbody></table></div>");
         builder.AppendLine("</section>");
     }
 
@@ -402,4 +562,8 @@ pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 Consolas,
         string RawOutput,
         IReadOnlyList<BcdEntry> Entries,
         string? Error);
+
+    private sealed record BsodReportData(IReadOnlyList<BsodAnalysisRow> Rows, string? Error);
+
+    private sealed record ServiceRepairReportData(IReadOnlyList<ServiceRepairRow> Rows, string? Error);
 }

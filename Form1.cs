@@ -22,6 +22,7 @@ public partial class Form1 : Form
     private readonly ToolStripMenuItem _copyRowMenuItem = new("Копировать строку");
     private readonly ToolStripMenuItem _editRegistryMenuItem = new("Изменить значение");
     private readonly ToolStripMenuItem _openInIUnlockerRegistryMenuItem = new("Открыть значение в реестре iUnlocker");
+    private readonly ToolStripMenuItem _deleteRegistrySectionMenuItem = new("Удалить раздел реестра");
     private readonly ToolStripMenuItem _editScheduledTaskMenuItem = new("Изменить задачу");
     private readonly ToolStripMenuItem _deleteStartupMenuItem = new("Удалить запись");
     private readonly ToolStripMenuItem _openInIUnlockerExplorerMenuItem = new("Открыть файл в проводнике iUnlocker");
@@ -110,7 +111,7 @@ public partial class Form1 : Form
         UiTheme.StyleGrid(_grid);
         _grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
         _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-        _grid.MultiSelect = false;
+        _grid.MultiSelect = true;
         _grid.ReadOnly = true;
         _grid.RowHeadersVisible = false;
         _grid.ScrollBars = ScrollBars.Both;
@@ -141,6 +142,7 @@ public partial class Form1 : Form
         _copyRowMenuItem.Click += (_, _) => CopySelectedRow();
         _editRegistryMenuItem.Click += (_, _) => EditSelectedRegistryValue();
         _openInIUnlockerRegistryMenuItem.Click += (_, _) => OpenSelectedInIUnlockerRegistry();
+        _deleteRegistrySectionMenuItem.Click += (_, _) => DeleteSelectedRegistrySection();
         _editScheduledTaskMenuItem.Click += (_, _) => EditSelectedScheduledTask();
         _deleteStartupMenuItem.Click += (_, _) => DeleteSelectedStartupEntry();
         _openInIUnlockerExplorerMenuItem.Click += (_, _) => OpenSelectedInIUnlockerExplorer();
@@ -164,6 +166,7 @@ public partial class Form1 : Form
             new ToolStripSeparator(),
             _editRegistryMenuItem,
             _openInIUnlockerRegistryMenuItem,
+            _deleteRegistrySectionMenuItem,
             _editScheduledTaskMenuItem,
             _disableServiceMenuItem,
             _serviceStartTypeMenuItem,
@@ -350,10 +353,55 @@ public partial class Form1 : Form
         }
 
         var visibleEntries = SortEntries(filtered).ToList();
+        UpdateVisibleColumns(visibleEntries);
         _grid.DataSource = visibleEntries;
         UpdateSortGlyph();
         UpdateStatus(visibleEntries.Count);
         UpdateActions();
+    }
+
+    private void UpdateVisibleColumns(IReadOnlyCollection<StartupEntry> entries)
+    {
+        var isScheduledTasks = IsScheduledTaskTabSelected();
+        var isServiceOrDriverTab = _selectedCategory.Equals("Services", StringComparison.OrdinalIgnoreCase) ||
+                                   _selectedCategory.Equals("Drivers", StringComparison.OrdinalIgnoreCase);
+        var isAllCategories = _selectedCategory.Equals("Все", StringComparison.OrdinalIgnoreCase) ||
+                              _selectedCategory.Equals(SuspiciousTab, StringComparison.OrdinalIgnoreCase);
+
+        SetColumnVisible(nameof(StartupEntry.Name), true);
+        SetColumnVisible(nameof(StartupEntry.Type), true);
+        SetColumnVisible(nameof(StartupEntry.Scope), true);
+        SetColumnVisible(nameof(StartupEntry.Command), true);
+        SetColumnVisible(nameof(StartupEntry.Location), true);
+        SetColumnVisible(nameof(StartupEntry.RiskLevel), true);
+        SetColumnVisible(nameof(StartupEntry.RiskDetails), true);
+        SetColumnVisible(nameof(StartupEntry.StartType), isServiceOrDriverTab);
+        SetColumnVisible(nameof(StartupEntry.TaskTriggers), isScheduledTasks);
+        SetColumnVisible(nameof(StartupEntry.TaskLastRun), isScheduledTasks);
+        SetColumnVisible(nameof(StartupEntry.TaskNextRun), isScheduledTasks);
+        SetColumnVisible(nameof(StartupEntry.TaskAuthor), isScheduledTasks);
+        SetColumnVisible(nameof(StartupEntry.TaskHidden), isScheduledTasks);
+
+        var showSignature = !isAllCategories && entries.Any(entry =>
+            !string.IsNullOrWhiteSpace(entry.SignatureStatus) ||
+            !string.IsNullOrWhiteSpace(entry.SignaturePublisher));
+        SetColumnVisible(nameof(StartupEntry.SignatureStatus), showSignature);
+        SetColumnVisible(nameof(StartupEntry.SignaturePublisher), showSignature);
+    }
+
+    private void SetColumnVisible(string propertyName, bool visible)
+    {
+        var column = _grid.Columns[propertyName];
+        if (column is null)
+        {
+            return;
+        }
+
+        column.Visible = visible;
+        if (!visible && string.Equals(_sortProperty, propertyName, StringComparison.OrdinalIgnoreCase))
+        {
+            _sortProperty = null;
+        }
     }
 
     private void GridColumnHeaderMouseClick(object? sender, DataGridViewCellMouseEventArgs e)
@@ -747,6 +795,17 @@ public partial class Form1 : Form
         return _grid.CurrentRow?.DataBoundItem as StartupEntry;
     }
 
+    private IReadOnlyList<StartupEntry> GetSelectedEntries()
+    {
+        return _grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.DataBoundItem as StartupEntry)
+            .Where(entry => entry is not null)
+            .Cast<StartupEntry>()
+            .Distinct()
+            .ToList();
+    }
+
     private void GridCellMouseDown(object? sender, DataGridViewCellMouseEventArgs e)
     {
         if (e.Button != MouseButtons.Right || e.RowIndex < 0)
@@ -754,8 +813,11 @@ public partial class Form1 : Form
             return;
         }
 
-        _grid.ClearSelection();
-        _grid.Rows[e.RowIndex].Selected = true;
+        if (!_grid.Rows[e.RowIndex].Selected)
+        {
+            _grid.ClearSelection();
+            _grid.Rows[e.RowIndex].Selected = true;
+        }
         _grid.CurrentCell = _grid.Rows[e.RowIndex].Cells[Math.Max(e.ColumnIndex, 0)];
         UpdateActions();
     }
@@ -860,15 +922,21 @@ public partial class Form1 : Form
 
     private void DeleteSelectedStartupEntry()
     {
-        var entry = GetSelectedEntry();
-        if (entry is null)
+        var entries = GetSelectedEntries();
+        if (entries.Count == 0)
         {
             return;
         }
 
-        var deleteText = IsServiceOrDriverEntry(entry)
-            ? $"Удалить запись \"{entry.Name}\" из Services?\r\n\r\n{entry.Location}\r\n\r\nФайл драйвера/службы удалён не будет."
-            : $"Удалить запись автозагрузки \"{entry.Name}\"?\r\n\r\n{entry.Location}";
+        if (entries.Any(entry => !CanDeleteStartupEntry(entry)))
+        {
+            MessageBox.Show(this, "Среди выбранных записей есть недоступные для удаления.", "Удалить автозагрузку", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var deleteText = entries.Count == 1
+            ? $"Удалить запись автозагрузки \"{entries[0].Name}\"?\r\n\r\n{entries[0].Location}"
+            : $"Удалить выбранные записи автозагрузки: {entries.Count}?\r\n\r\nФайлы служб и драйверов удалены не будут.";
 
         var result = MessageBox.Show(
             this,
@@ -884,8 +952,12 @@ public partial class Form1 : Form
 
         try
         {
-            DeleteStartupEntry(entry);
-            _statusLabel.Text = "Запись автозагрузки удалена.";
+            foreach (var entry in entries)
+            {
+                DeleteStartupEntry(entry);
+            }
+
+            _statusLabel.Text = entries.Count == 1 ? "Запись автозагрузки удалена." : $"Удалено записей: {entries.Count}.";
             RefreshEntries();
         }
         catch (Exception ex)
@@ -894,6 +966,44 @@ public partial class Form1 : Form
                 this,
                 ex.Message,
                 "Не удалось удалить запись",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
+    private void DeleteSelectedRegistrySection()
+    {
+        var entry = GetSelectedEntry();
+        if (entry is null || !CanDeleteRegistrySection(entry))
+        {
+            return;
+        }
+
+        var registryPath = GetRegistrySectionDisplayPath(entry);
+        var result = MessageBox.Show(
+            this,
+            $"Удалить раздел реестра?\r\n\r\n{registryPath}\r\n\r\nБудут удалены все значения и вложенные разделы. Это действие нельзя отменить.",
+            "Удалить раздел реестра",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+
+        if (result != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            DeleteRegistrySection(entry);
+            _statusLabel.Text = "Раздел реестра удалён.";
+            RefreshEntries();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                ex.Message,
+                "Не удалось удалить раздел реестра",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
         }
@@ -1057,6 +1167,47 @@ public partial class Form1 : Form
         }
 
         throw new InvalidOperationException("Для этой записи удаление пока не поддерживается.");
+    }
+
+    private static void DeleteRegistrySection(StartupEntry entry)
+    {
+        if (!CanDeleteRegistrySection(entry) || string.IsNullOrWhiteSpace(entry.RegistryKeyPath))
+        {
+            throw new InvalidOperationException("Для этой записи нет доступного раздела реестра.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.OfflineRegistryHiveFile) &&
+            !string.IsNullOrWhiteSpace(entry.OfflineRegistryMountPrefix))
+        {
+            OfflineRegistryEditor.DeleteKey(
+                entry.OfflineRegistryHiveFile,
+                entry.OfflineRegistryMountPrefix,
+                entry.RegistryKeyPath);
+            return;
+        }
+
+        if (entry.RegistryHive is not null)
+        {
+            DeleteLiveRegistryKey(entry.RegistryHive.Value, entry.RegistryView, entry.RegistryKeyPath);
+            return;
+        }
+
+        throw new InvalidOperationException("Не удалось определить hive реестра для удаления.");
+    }
+
+    private static string GetRegistrySectionDisplayPath(StartupEntry entry)
+    {
+        var root = entry.RegistryHive switch
+        {
+            RegistryHive.LocalMachine => "HKEY_LOCAL_MACHINE",
+            RegistryHive.CurrentUser => "HKEY_CURRENT_USER",
+            RegistryHive.Users => "HKEY_USERS",
+            RegistryHive.ClassesRoot => "HKEY_CLASSES_ROOT",
+            RegistryHive.CurrentConfig => "HKEY_CURRENT_CONFIG",
+            _ => "Offline registry",
+        };
+
+        return $"{root}\\{entry.RegistryKeyPath}";
     }
 
     private static void DeleteLiveRegistryKey(RegistryHive hive, RegistryView view, string keyPath)
@@ -1408,17 +1559,21 @@ public partial class Form1 : Form
 
     private void UpdateActions()
     {
-        var entry = GetSelectedEntry();
-        var hasSelection = entry is not null;
+        var entries = GetSelectedEntries();
+        var entry = entries.Count == 1 ? entries[0] : null;
+        var hasSelection = entries.Count > 0;
 
         _copyCommandMenuItem.Enabled = hasSelection;
         _openLocationMenuItem.Enabled = hasSelection;
         _copyRowMenuItem.Enabled = hasSelection;
         _editRegistryMenuItem.Enabled = entry?.CanEditRegistry == true;
         _openInIUnlockerRegistryMenuItem.Enabled = entry?.CanEditRegistry == true;
+        _deleteRegistrySectionMenuItem.Enabled = entry is not null && CanDeleteRegistrySection(entry);
         _editScheduledTaskMenuItem.Enabled = entry?.CanEditScheduledTask == true;
-        _deleteStartupMenuItem.Enabled = hasSelection && CanDeleteStartupEntry(entry!);
-        _openInIUnlockerExplorerMenuItem.Enabled = hasSelection && TryGetExistingTargetPath(entry!) is not null;
+        _deleteStartupMenuItem.Enabled = hasSelection &&
+                                         (entry is null || !CanDeleteRegistrySection(entry)) &&
+                                         entries.All(CanDeleteStartupEntry);
+        _openInIUnlockerExplorerMenuItem.Enabled = entry is not null && TryGetExistingTargetPath(entry) is not null;
         _disableServiceMenuItem.Enabled = entry is not null && CanEditServiceStart(entry);
         _serviceStartTypeMenuItem.Enabled = entry is not null && CanEditServiceStart(entry);
         _disableServiceMenuItem.Text = entry?.Category.Equals("Drivers", StringComparison.OrdinalIgnoreCase) == true
@@ -1435,7 +1590,16 @@ public partial class Form1 : Form
                !string.IsNullOrWhiteSpace(entry.ScheduledTaskPath) ||
                (entry.Category == "Scheduled Task" &&
                 entry.Source.Contains("offline", StringComparison.OrdinalIgnoreCase) &&
-                File.Exists(entry.Location));
+               File.Exists(entry.Location));
+    }
+
+    private static bool CanDeleteRegistrySection(StartupEntry entry)
+    {
+        return !string.IsNullOrWhiteSpace(entry.RegistryKeyPath) &&
+               ((entry.RegistryHive is not null && entry.CanEditRegistry) ||
+                (!string.IsNullOrWhiteSpace(entry.OfflineRegistryHiveFile) &&
+                 !string.IsNullOrWhiteSpace(entry.OfflineRegistryMountPrefix) &&
+                 entry.CanEditRegistry));
     }
 
     private static bool IsServiceOrDriverEntry(StartupEntry entry)

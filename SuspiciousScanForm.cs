@@ -59,7 +59,7 @@ public sealed class SuspiciousScanForm : Form
         _grid.AllowUserToResizeRows = false;
         _grid.AutoGenerateColumns = false;
         _grid.ReadOnly = true;
-        _grid.MultiSelect = false;
+        _grid.MultiSelect = true;
         _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         _grid.SelectionChanged += (_, _) => UpdateButtons();
         UiTheme.StyleGrid(_grid);
@@ -371,17 +371,32 @@ public sealed class SuspiciousScanForm : Form
         return _grid.CurrentRow?.DataBoundItem as SuspiciousFinding;
     }
 
+    private IReadOnlyList<SuspiciousFinding> GetSelectedFindings()
+    {
+        return _grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.DataBoundItem as SuspiciousFinding)
+            .Where(finding => finding is not null)
+            .Cast<SuspiciousFinding>()
+            .Distinct()
+            .ToList();
+    }
+
     private void QuarantineSelected()
     {
-        var finding = GetSelectedFinding();
-        if (finding is null || string.IsNullOrWhiteSpace(finding.Path) || !File.Exists(finding.Path))
+        var findings = GetSelectedFindings()
+            .Where(finding => !string.IsNullOrWhiteSpace(finding.Path) && File.Exists(finding.Path))
+            .ToList();
+        if (findings.Count == 0)
         {
             return;
         }
 
         var result = MessageBox.Show(
             this,
-            $"Переместить файл в карантин?\r\n\r\n{finding.Path}\r\n\r\nПричина: {finding.Reason}",
+            findings.Count == 1
+                ? $"Переместить файл в карантин?\r\n\r\n{findings[0].Path}\r\n\r\nПричина: {findings[0].Reason}"
+                : $"Переместить выбранные файлы в карантин: {findings.Count}?",
             "Карантин",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -392,10 +407,16 @@ public sealed class SuspiciousScanForm : Form
 
         try
         {
-            QuarantineManager.QuarantineFile(finding.Path, finding.Reason, finding.Source);
-            _findings.Remove(finding);
+            foreach (var finding in findings)
+            {
+                QuarantineManager.QuarantineFile(finding.Path, finding.Reason, finding.Source);
+                _findings.Remove(finding);
+            }
+
             _grid.DataSource = _findings.ToList();
-            _statusLabel.Text = $"Файл перемещён в карантин. Осталось: {_findings.Count}.";
+            _statusLabel.Text = findings.Count == 1
+                ? $"Файл перемещён в карантин. Осталось: {_findings.Count}."
+                : $"Файлов перемещено в карантин: {findings.Count}. Осталось: {_findings.Count}.";
             UpdateButtons();
         }
         catch (Exception ex)
@@ -424,10 +445,10 @@ public sealed class SuspiciousScanForm : Form
 
     private void UpdateButtons()
     {
-        var finding = GetSelectedFinding();
-        var hasFile = finding is not null && !string.IsNullOrWhiteSpace(finding.Path) && File.Exists(finding.Path);
+        var findings = GetSelectedFindings();
+        var hasFile = findings.Count > 0 && findings.All(finding => !string.IsNullOrWhiteSpace(finding.Path) && File.Exists(finding.Path));
         _quarantineButton.Enabled = hasFile;
-        _openLocationButton.Enabled = hasFile;
+        _openLocationButton.Enabled = findings.Count == 1 && hasFile;
     }
 
     private sealed record SuspiciousFinding(

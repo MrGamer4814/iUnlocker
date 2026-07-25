@@ -16,6 +16,9 @@ public sealed class TaskManagerForm : Form
 
     private readonly AppSession _session;
     private readonly DataGridView _grid = new();
+    private readonly DataGridView _modulesGrid = new();
+    private readonly DataGridView _threadsGrid = new();
+    private readonly Label _detailsLabel = new();
     private readonly TextBox _searchBox = new();
     private readonly CheckBox _hideSignedBox = new();
     private readonly Button _refreshButton = new();
@@ -49,8 +52,11 @@ public sealed class TaskManagerForm : Form
     private Point _lastMouseLocation;
     private int _lastTooltipPid = int.MinValue;
     private string _lastTooltipText = string.Empty;
-    private string? _sortProperty = nameof(ProcessDisplayRow.Pid);
+    private string? _sortProperty;
     private ListSortDirection _sortDirection = ListSortDirection.Ascending;
+    private int _detailsPid = int.MinValue;
+    private bool _loadingDetails;
+    private bool _updatingProcessList;
 
     public TaskManagerForm(AppSession session)
     {
@@ -122,7 +128,7 @@ public sealed class TaskManagerForm : Form
         _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         UiTheme.StyleGrid(_grid);
         _grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-        _grid.MultiSelect = false;
+        _grid.MultiSelect = true;
         _grid.ReadOnly = true;
         _grid.RowHeadersVisible = false;
         _grid.RowTemplate.Height = 24;
@@ -139,6 +145,7 @@ public sealed class TaskManagerForm : Form
         _grid.CellMouseMove += GridCellMouseMove;
         _grid.MouseLeave += (_, _) => HideProcessToolTip();
         _grid.KeyDown += GridKeyDown;
+        _grid.SelectionChanged += (_, _) => RefreshSelectedProcessDetails();
         _grid.DataBindingComplete += (_, _) => HighlightRows();
         EnableDoubleBuffering(_grid);
 
@@ -181,6 +188,18 @@ public sealed class TaskManagerForm : Form
         });
         _grid.ContextMenuStrip = _processMenu;
 
+        var processSplit = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            SplitterDistance = 430,
+            Panel1MinSize = 180,
+            Panel2MinSize = 150,
+            FixedPanel = FixedPanel.None,
+        };
+        processSplit.Panel1.Controls.Add(_grid);
+        processSplit.Panel2.Controls.Add(BuildDetailsPanel());
+
         _statusLabel.AutoSize = true;
         _statusLabel.Padding = new Padding(0, 10, 0, 0);
         _statusLabel.ForeColor = UiTheme.MutedText;
@@ -192,7 +211,7 @@ public sealed class TaskManagerForm : Form
         _refreshTimer.Start();
 
         root.Controls.Add(toolbar, 0, 0);
-        root.Controls.Add(_grid, 0, 1);
+        root.Controls.Add(processSplit, 0, 1);
         root.Controls.Add(_statusLabel, 0, 2);
         Controls.Add(root);
     }
@@ -221,6 +240,61 @@ public sealed class TaskManagerForm : Form
             Resizable = DataGridViewTriState.True,
             SortMode = DataGridViewColumnSortMode.Programmatic,
         });
+    }
+
+    private Control BuildDetailsPanel()
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Padding = new Padding(0, 6, 0, 0),
+        };
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        _detailsLabel.AutoSize = true;
+        _detailsLabel.ForeColor = UiTheme.MutedText;
+        _detailsLabel.Padding = new Padding(0, 0, 0, 4);
+        _detailsLabel.Text = "Выберите один процесс для просмотра DLL и потоков.";
+
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        var modulesPage = new TabPage("DLL и модули") { BackColor = UiTheme.Surface };
+        var threadsPage = new TabPage("Потоки") { BackColor = UiTheme.Surface };
+        ConfigureDetailsGrid(_modulesGrid);
+        ConfigureDetailsGrid(_threadsGrid);
+        _modulesGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessModuleRow.Name), HeaderText = "Модуль", Width = 220 });
+        _modulesGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessModuleRow.Path), HeaderText = "Путь", Width = 500 });
+        _modulesGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessModuleRow.Version), HeaderText = "Версия", Width = 140 });
+        _modulesGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessModuleRow.Company), HeaderText = "Компания", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+        _threadsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessThreadRow.Id), HeaderText = "TID", Width = 90 });
+        _threadsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessThreadRow.State), HeaderText = "Состояние", Width = 150 });
+        _threadsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessThreadRow.Priority), HeaderText = "Приоритет", Width = 105 });
+        _threadsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessThreadRow.UserTime), HeaderText = "Время пользователя", Width = 160 });
+        _threadsGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(ProcessThreadRow.KernelTime), HeaderText = "Время ядра", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+        modulesPage.Controls.Add(_modulesGrid);
+        threadsPage.Controls.Add(_threadsGrid);
+        tabs.TabPages.Add(modulesPage);
+        tabs.TabPages.Add(threadsPage);
+
+        panel.Controls.Add(_detailsLabel, 0, 0);
+        panel.Controls.Add(tabs, 0, 1);
+        return panel;
+    }
+
+    private static void ConfigureDetailsGrid(DataGridView grid)
+    {
+        grid.Dock = DockStyle.Fill;
+        grid.AllowUserToAddRows = false;
+        grid.AllowUserToDeleteRows = false;
+        grid.AllowUserToResizeRows = false;
+        grid.ReadOnly = true;
+        grid.RowHeadersVisible = false;
+        grid.AutoGenerateColumns = false;
+        grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+        UiTheme.StyleGrid(grid);
     }
 
     private static void EnableDoubleBuffering(DataGridView grid)
@@ -368,26 +442,47 @@ public sealed class TaskManagerForm : Form
 
     private void ApplyView()
     {
-        var selectedPid = GetSelectedPid();
+        var selectedPids = GetSelectedPids();
         var firstVisiblePid = GetFirstVisiblePid();
         var firstVisibleIndex = GetFirstVisibleIndex();
 
         var displayRows = new List<ProcessDisplayRow>();
-        var visiblePids = GetFilterVisiblePids();
-        if (_childrenByParent.TryGetValue(RootParentPid, out var roots))
+        var showFlatList = !string.IsNullOrWhiteSpace(_sortProperty) || _hideSignedBox.Checked;
+        if (showFlatList)
         {
-            foreach (var row in roots)
+            foreach (var row in SortSiblings(GetFilteredRows()))
             {
-                AddDisplayRows(displayRows, row, depth: 0, [], visiblePids);
+                displayRows.Add(ProcessDisplayRow.From(row, depth: 0, hasChildren: false, expanded: false));
+            }
+        }
+        else
+        {
+            var visiblePids = GetFilterVisiblePids();
+            if (_childrenByParent.TryGetValue(RootParentPid, out var roots))
+            {
+                foreach (var row in roots)
+                {
+                    AddDisplayRows(displayRows, row, depth: 0, [], visiblePids);
+                }
             }
         }
 
-        UpdateDisplayRows(displayRows);
-        UpdateSortGlyph();
-        RestoreGridPosition(displayRows, selectedPid, firstVisiblePid, firstVisibleIndex);
-        RefreshTooltipUnderMouse();
-        _statusLabel.Visible = false;
-        _statusLabel.Text = string.Empty;
+        _updatingProcessList = true;
+        try
+        {
+            UpdateDisplayRows(displayRows);
+            UpdateSortGlyph();
+            RestoreGridPosition(displayRows, selectedPids, firstVisiblePid, firstVisibleIndex);
+            RefreshTooltipUnderMouse();
+            _statusLabel.Visible = false;
+            _statusLabel.Text = string.Empty;
+        }
+        finally
+        {
+            _updatingProcessList = false;
+        }
+
+        RefreshSelectedProcessDetails();
     }
 
     private void UpdateDisplayRows(IReadOnlyList<ProcessDisplayRow> displayRows)
@@ -408,9 +503,15 @@ public sealed class TaskManagerForm : Form
         }
     }
 
-    private int? GetSelectedPid()
+    private IReadOnlyList<int> GetSelectedPids()
     {
-        return _grid.CurrentRow?.DataBoundItem is ProcessDisplayRow row ? row.Pid : null;
+        return _grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.DataBoundItem as ProcessDisplayRow)
+            .Where(row => row is not null)
+            .Select(row => row!.Pid)
+            .Distinct()
+            .ToList();
     }
 
     private int? GetFirstVisiblePid()
@@ -435,7 +536,7 @@ public sealed class TaskManagerForm : Form
 
     private void RestoreGridPosition(
         IReadOnlyList<ProcessDisplayRow> displayRows,
-        int? selectedPid,
+        IReadOnlyList<int> selectedPids,
         int? firstVisiblePid,
         int firstVisibleIndex)
     {
@@ -461,18 +562,25 @@ public sealed class TaskManagerForm : Form
             // Row can become temporarily invisible while DataGridView refreshes.
         }
 
-        if (selectedPid is int selected)
+        if (selectedPids.Count > 0)
         {
-            var selectedIndex = displayRows.ToList().FindIndex(row => row.Pid == selected);
-            if (selectedIndex >= 0 && selectedIndex < _grid.Rows.Count)
+            _grid.ClearSelection();
+            var firstSelectedIndex = -1;
+            for (var index = 0; index < displayRows.Count && index < _grid.Rows.Count; index++)
             {
-                _grid.ClearSelection();
-                _grid.Rows[selectedIndex].Selected = true;
-                if (selectedIndex >= visibleIndex &&
-                    selectedIndex < visibleIndex + Math.Max(1, _grid.DisplayedRowCount(includePartialRow: true)))
+                if (!selectedPids.Contains(displayRows[index].Pid))
                 {
-                    _grid.CurrentCell = _grid.Rows[selectedIndex].Cells[0];
+                    continue;
                 }
+
+                _grid.Rows[index].Selected = true;
+                firstSelectedIndex = firstSelectedIndex < 0 ? index : firstSelectedIndex;
+            }
+
+            if (firstSelectedIndex >= visibleIndex &&
+                firstSelectedIndex < visibleIndex + Math.Max(1, _grid.DisplayedRowCount(includePartialRow: true)))
+            {
+                _grid.CurrentCell = _grid.Rows[firstSelectedIndex].Cells[0];
             }
         }
     }
@@ -486,12 +594,7 @@ public sealed class TaskManagerForm : Form
             return null;
         }
 
-        var matches = _rows
-            .Where(row =>
-                (string.IsNullOrWhiteSpace(query) ||
-                 row.Pid.ToString().Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                 row.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)) &&
-                (!hideSigned || !IsValidSignature(row.SignatureStatus)))
+        var matches = GetFilteredRows()
             .Select(row => row.Pid)
             .ToHashSet();
 
@@ -520,6 +623,17 @@ public sealed class TaskManagerForm : Form
     private static bool IsValidSignature(string signatureStatus)
     {
         return signatureStatus.Equals("Действительна", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private IEnumerable<ProcessRow> GetFilteredRows()
+    {
+        var query = _searchBox.Text.Trim();
+        var hideSigned = _hideSignedBox.Checked;
+        return _rows.Where(row =>
+            (string.IsNullOrWhiteSpace(query) ||
+             row.Pid.ToString().Contains(query, StringComparison.OrdinalIgnoreCase) ||
+             row.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)) &&
+            (!hideSigned || !IsValidSignature(row.SignatureStatus)));
     }
 
     private void AddDisplayRows(
@@ -558,7 +672,8 @@ public sealed class TaskManagerForm : Form
     {
         if (string.IsNullOrWhiteSpace(_sortProperty))
         {
-            return rows.OrderBy(row => row.Name, StringComparer.CurrentCultureIgnoreCase).ThenBy(row => row.Pid);
+            // Process Informer keeps the provider's insertion order while no column sort is active.
+            return rows;
         }
 
         return _sortProperty switch
@@ -619,8 +734,11 @@ public sealed class TaskManagerForm : Form
             return;
         }
 
-        _grid.ClearSelection();
-        _grid.Rows[e.RowIndex].Selected = true;
+        if (!_grid.Rows[e.RowIndex].Selected)
+        {
+            _grid.ClearSelection();
+            _grid.Rows[e.RowIndex].Selected = true;
+        }
         _grid.CurrentCell = _grid.Rows[e.RowIndex].Cells[Math.Max(0, e.ColumnIndex)];
         _contextMenuOpenedOnTreeCell = e.ColumnIndex == 0;
     }
@@ -673,6 +791,147 @@ public sealed class TaskManagerForm : Form
         return _grid.CurrentRow?.DataBoundItem as ProcessDisplayRow;
     }
 
+    private IReadOnlyList<ProcessDisplayRow> GetSelectedDisplayRows()
+    {
+        return _grid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.DataBoundItem as ProcessDisplayRow)
+            .Where(row => row is not null)
+            .Cast<ProcessDisplayRow>()
+            .Distinct()
+            .ToList();
+    }
+
+    private async void RefreshSelectedProcessDetails()
+    {
+        if (_updatingProcessList)
+        {
+            return;
+        }
+
+        var rows = GetSelectedDisplayRows();
+        var row = rows.Count == 1 ? rows[0] : null;
+        if (row is null || row.Pid <= 0)
+        {
+            _detailsPid = int.MinValue;
+            _modulesGrid.DataSource = null;
+            _threadsGrid.DataSource = null;
+            _detailsLabel.Text = "Выберите один процесс для просмотра DLL и потоков.";
+            return;
+        }
+
+        if (_loadingDetails || _detailsPid == row.Pid)
+        {
+            return;
+        }
+
+        var pid = row.Pid;
+        _detailsPid = pid;
+        _loadingDetails = true;
+        _detailsLabel.Text = $"Загрузка деталей процесса {row.Name} ({pid})...";
+        try
+        {
+            var details = await Task.Run(() => ReadProcessDetails(pid));
+            var selectedPid = GetSelectedDisplayRows().Count == 1
+                ? GetSelectedDisplayRows()[0].Pid
+                : int.MinValue;
+            if (IsDisposed || selectedPid != pid)
+            {
+                return;
+            }
+
+            _modulesGrid.DataSource = details.Modules;
+            _threadsGrid.DataSource = details.Threads;
+            _detailsLabel.Text = details.Message;
+        }
+        catch (Exception ex)
+        {
+            if (!IsDisposed && _detailsPid == pid)
+            {
+                _modulesGrid.DataSource = null;
+                _threadsGrid.DataSource = null;
+                _detailsLabel.Text = $"Не удалось получить детали: {ex.Message}";
+            }
+        }
+        finally
+        {
+            _loadingDetails = false;
+            var selectedRows = GetSelectedDisplayRows();
+            if (!IsDisposed && selectedRows.Count == 1 && selectedRows[0].Pid != pid)
+            {
+                _detailsPid = int.MinValue;
+                BeginInvoke(new Action(RefreshSelectedProcessDetails));
+            }
+        }
+    }
+
+    private static ProcessDetails ReadProcessDetails(int pid)
+    {
+        var modules = new List<ProcessModuleRow>();
+        var threads = new List<ProcessThreadRow>();
+        var errors = new List<string>();
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            try
+            {
+                foreach (ProcessModule module in process.Modules)
+                {
+                    try
+                    {
+                        var version = module.FileVersionInfo;
+                        modules.Add(new ProcessModuleRow(
+                            module.ModuleName,
+                            module.FileName,
+                            version.FileVersion ?? string.Empty,
+                            version.CompanyName ?? string.Empty));
+                    }
+                    catch
+                    {
+                        modules.Add(new ProcessModuleRow(module.ModuleName, module.FileName, string.Empty, string.Empty));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"DLL: {ex.Message}");
+            }
+
+            try
+            {
+                foreach (ProcessThread thread in process.Threads)
+                {
+                    try
+                    {
+                        threads.Add(new ProcessThreadRow(
+                            thread.Id,
+                            thread.ThreadState.ToString(),
+                            thread.CurrentPriority.ToString(),
+                            thread.UserProcessorTime.ToString(),
+                            thread.PrivilegedProcessorTime.ToString()));
+                    }
+                    catch
+                    {
+                        // A thread may exit while the collection is read.
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Потоки: {ex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            errors.Add(ex.Message);
+        }
+
+        var message = errors.Count == 0
+            ? $"DLL и модулей: {modules.Count}. Потоков: {threads.Count}."
+            : string.Join(" | ", errors);
+        return new ProcessDetails(modules, threads, message);
+    }
+
     private ProcessRow? GetProcessRow(int pid)
     {
         return _rows.FirstOrDefault(row => row.Pid == pid);
@@ -680,7 +939,8 @@ public sealed class TaskManagerForm : Form
 
     private void UpdateProcessMenu()
     {
-        var row = GetSelectedDisplayRow();
+        var rows = GetSelectedDisplayRows();
+        var row = rows.Count == 1 ? rows[0] : null;
         var hasProcess = row is not null && row.Pid > 0;
         var hasPath = hasProcess && !string.IsNullOrWhiteSpace(row!.FilePath) && File.Exists(row.FilePath);
         var hasChildren = hasProcess && _childrenByParent.ContainsKey(row!.Pid);
@@ -688,7 +948,7 @@ public sealed class TaskManagerForm : Form
         var processSuspended = hasProcess && _suspendedPids.Contains(row!.Pid);
         var treeSuspended = hasProcess && hasChildren && IsProcessTreeSuspended(row!.Pid);
 
-        _terminateMenuItem.Enabled = hasProcess;
+        _terminateMenuItem.Enabled = rows.Any(selected => selected.Pid > 0);
         _terminateTreeMenuItem.Enabled = hasProcess && treeActionsAvailable;
         _suspendMenuItem.Text = processSuspended ? "Возобновить" : "Приостановить";
         _suspendTreeMenuItem.Text = treeSuspended ? "Возобновить дерево" : "Приостановить дерево";
@@ -698,20 +958,20 @@ public sealed class TaskManagerForm : Form
         _criticalMenuItem.Enabled = hasProcess;
         _openLocationMenuItem.Enabled = hasPath;
         _propertiesMenuItem.Enabled = hasPath;
-        _copyMenuItem.Enabled = row is not null;
+        _copyMenuItem.Enabled = rows.Count > 0;
     }
 
     private void TerminateSelectedProcess(bool tree)
     {
-        var row = GetSelectedDisplayRow();
-        if (row is null || row.Pid <= 0)
+        var rows = GetSelectedDisplayRows().Where(row => row.Pid > 0).ToList();
+        if (rows.Count == 0 || (tree && rows.Count != 1))
         {
             return;
         }
 
         var message = tree
-            ? $"Завершить процесс \"{row.Name}\" и все дочерние процессы?"
-            : $"Завершить процесс \"{row.Name}\"?";
+            ? $"Завершить процесс \"{rows[0].Name}\" и все дочерние процессы?"
+            : rows.Count == 1 ? $"Завершить процесс \"{rows[0].Name}\"?" : $"Завершить выбранные процессы: {rows.Count}?";
 
         if (MessageBox.Show(this, message, "Завершение процесса", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
         {
@@ -720,7 +980,9 @@ public sealed class TaskManagerForm : Form
 
         try
         {
-            var pids = tree ? GetProcessTreePids(row.Pid).Reverse().ToList() : [row.Pid];
+            var pids = tree
+                ? GetProcessTreePids(rows[0].Pid).Reverse().ToList()
+                : rows.Select(row => row.Pid).Distinct().ToList();
             foreach (var pid in pids)
             {
                 TryTerminateProcess(pid);
@@ -737,16 +999,18 @@ public sealed class TaskManagerForm : Form
 
     private void SuspendSelectedProcess(bool tree)
     {
-        var row = GetSelectedDisplayRow();
-        if (row is null || row.Pid <= 0)
+        var rows = GetSelectedDisplayRows().Where(row => row.Pid > 0).ToList();
+        if (rows.Count == 0 || (tree && rows.Count != 1))
         {
             return;
         }
 
         try
         {
-            var pids = tree ? GetProcessTreePids(row.Pid).ToList() : [row.Pid];
-            var resume = tree ? IsProcessTreeSuspended(row.Pid) : _suspendedPids.Contains(row.Pid);
+            var pids = tree
+                ? GetProcessTreePids(rows[0].Pid).ToList()
+                : rows.Select(row => row.Pid).Distinct().ToList();
+            var resume = tree ? IsProcessTreeSuspended(rows[0].Pid) : pids.All(_suspendedPids.Contains);
             foreach (var pid in pids)
             {
                 if (resume)
@@ -949,13 +1213,14 @@ public sealed class TaskManagerForm : Form
 
     private void CopySelectedProcess()
     {
-        var row = GetSelectedDisplayRow();
-        if (row is null)
+        var rows = GetSelectedDisplayRows();
+        if (rows.Count == 0)
         {
             return;
         }
 
-        Clipboard.SetText($"{row.Name}\t{row.Pid}\t{row.Criticality}\t{row.Load}\t{row.Memory}\t{row.Description}\t{row.SignatureStatus}\t{row.SignaturePublisher}\t{row.Company}\t{row.FilePath}");
+        Clipboard.SetText(string.Join(Environment.NewLine, rows.Select(row =>
+            $"{row.Name}\t{row.Pid}\t{row.Criticality}\t{row.Load}\t{row.Memory}\t{row.Description}\t{row.SignatureStatus}\t{row.SignaturePublisher}\t{row.Company}\t{row.FilePath}")));
     }
 
     private void ShowProcessActionError(Exception ex)
@@ -1178,9 +1443,15 @@ public sealed class TaskManagerForm : Form
 
         if (string.Equals(_sortProperty, property, StringComparison.OrdinalIgnoreCase))
         {
-            _sortDirection = _sortDirection == ListSortDirection.Ascending
-                ? ListSortDirection.Descending
-                : ListSortDirection.Ascending;
+            if (_sortDirection == ListSortDirection.Ascending)
+            {
+                _sortDirection = ListSortDirection.Descending;
+            }
+            else
+            {
+                _sortProperty = null;
+                _sortDirection = ListSortDirection.Ascending;
+            }
         }
         else
         {
@@ -1242,11 +1513,24 @@ public sealed class TaskManagerForm : Form
     {
         try
         {
+            TryEnableDebugPrivilege();
             return NativeProcessReader.Read(cachedMetadata, refreshMetadata);
         }
         catch
         {
             return new ProcessSnapshot(ReadBasicProcessInfos(cachedMetadata), null);
+        }
+    }
+
+    private static void TryEnableDebugPrivilege()
+    {
+        try
+        {
+            RtlAdjustPrivilege(SeDebugPrivilege, true, false, out _);
+        }
+        catch
+        {
+            // The process list remains available even when the privilege is unavailable.
         }
     }
 
@@ -1396,7 +1680,7 @@ public sealed class TaskManagerForm : Form
                     var parentPid = ToInt32(item.InheritedFromUniqueProcessId);
                     var name = ReadProcessName(item.ImageName, pid);
 
-                    var metadata = GetMetadata(pid, cachedMetadata, refreshMetadata);
+                    var metadata = GetMetadata(pid, name, cachedMetadata, refreshMetadata);
                     if (updatedMetadata is not null)
                     {
                         updatedMetadata[pid] = metadata;
@@ -1437,6 +1721,7 @@ public sealed class TaskManagerForm : Form
 
         private static ProcessMetadata GetMetadata(
             int pid,
+            string processName,
             Dictionary<int, ProcessMetadata> cachedMetadata,
             bool refreshMetadata)
         {
@@ -1446,7 +1731,7 @@ public sealed class TaskManagerForm : Form
             }
 
             var (isCritical, isProtected) = TryGetProcessFlags(pid);
-            var filePath = TryGetProcessImagePath(pid);
+            var filePath = TryGetProcessImagePath(pid, processName);
             if (string.IsNullOrWhiteSpace(filePath) &&
                 cachedMetadata.TryGetValue(pid, out cached))
             {
@@ -1534,7 +1819,7 @@ public sealed class TaskManagerForm : Form
             return status >= 0 && protectionLevel != 0;
         }
 
-        private static string TryGetProcessImagePath(int pid)
+        private static string TryGetProcessImagePath(int pid, string processName)
         {
             if (pid <= 4)
             {
@@ -1544,21 +1829,56 @@ public sealed class TaskManagerForm : Form
             var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
             if (handle == IntPtr.Zero)
             {
-                return string.Empty;
+                return TryGetManagedProcessImagePath(pid, processName);
             }
 
             try
             {
                 var buffer = new StringBuilder(32768);
                 var size = buffer.Capacity;
-                return QueryFullProcessImageName(handle, 0, buffer, ref size)
-                    ? buffer.ToString()
-                    : string.Empty;
+                if (QueryFullProcessImageName(handle, 0, buffer, ref size))
+                {
+                    return buffer.ToString();
+                }
             }
             finally
             {
                 CloseHandle(handle);
             }
+
+            return TryGetManagedProcessImagePath(pid, processName);
+        }
+
+        private static string TryGetManagedProcessImagePath(int pid, string processName)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(pid);
+                var filePath = process.MainModule?.FileName;
+                if (!string.IsNullOrWhiteSpace(filePath))
+                {
+                    return filePath;
+                }
+            }
+            catch
+            {
+                // Protected processes may reject MainModule too.
+            }
+
+            if (string.IsNullOrWhiteSpace(processName) || !processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            var windowsPath = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            var candidates = new[]
+            {
+                Path.Combine(Environment.SystemDirectory, processName),
+                Path.Combine(windowsPath, "SysWOW64", processName),
+                Path.Combine(windowsPath, processName),
+            };
+
+            return candidates.FirstOrDefault(File.Exists) ?? string.Empty;
         }
 
         private static (string Description, string Company) TryGetFileVersionMetadata(string filePath)
@@ -1803,6 +2123,15 @@ public sealed class TaskManagerForm : Form
         string Company,
         bool IsCritical,
         bool Suspicious);
+
+    private sealed record ProcessModuleRow(string Name, string Path, string Version, string Company);
+
+    private sealed record ProcessThreadRow(int Id, string State, string Priority, string UserTime, string KernelTime);
+
+    private sealed record ProcessDetails(
+        IReadOnlyList<ProcessModuleRow> Modules,
+        IReadOnlyList<ProcessThreadRow> Threads,
+        string Message);
 
     private sealed record ProcessDisplayRow(
         string Name,

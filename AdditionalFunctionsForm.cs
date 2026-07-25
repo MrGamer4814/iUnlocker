@@ -23,7 +23,7 @@ public sealed class AdditionalFunctionsForm : Form
     private readonly Button _chkdskButton = new();
     private readonly Button _bootCheckButton = new();
     private readonly Button _bootRepairButton = new();
-    private readonly Button _bcdCheckButton = new();
+    private readonly Button _bootDiagnosticsButton = new();
     private readonly Button _eventLogButton = new();
     private readonly Button _bsodAnalyzerButton = new();
     private readonly Button _exportReportButton = new();
@@ -33,6 +33,7 @@ public sealed class AdditionalFunctionsForm : Form
     private readonly Button _enableUacButton = new();
     private readonly Button _serviceRepairButton = new();
     private readonly Button _restartButton = new();
+    private readonly Button _restartRecoveryButton = new();
     private readonly Button _restartSafeModeButton = new();
     private readonly Button _shutdownButton = new();
     private readonly CheckBox _safeModeCheckBox = new();
@@ -163,9 +164,9 @@ public sealed class AdditionalFunctionsForm : Form
             "Восстановить загрузчик",
             (_, _) => OpenBootRepair());
         ConfigureActionButton(
-            _bcdCheckButton,
-            "Проверка BCD",
-            (_, _) => OpenBcdCheck());
+            _bootDiagnosticsButton,
+            "Диагностика загрузки",
+            (_, _) => OpenBootDiagnostics());
         ConfigureActionButton(
             _eventLogButton,
             "Журнал событий",
@@ -203,6 +204,10 @@ public sealed class AdditionalFunctionsForm : Form
             "Перезагрузка компьютера",
             (_, _) => RestartComputer());
         ConfigureActionButton(
+            _restartRecoveryButton,
+            "Перезагрузиться в среду восстановления",
+            (_, _) => RestartToRecoveryEnvironment());
+        ConfigureActionButton(
             _restartSafeModeButton,
             "Перезагрузиться в безопасный режим",
             (_, _) => RestartToSafeMode());
@@ -220,6 +225,7 @@ public sealed class AdditionalFunctionsForm : Form
         _bootRepairButton.Enabled = IsOfflineWindowsSelected();
         _disableTestModeButton.Enabled = !_session.IsWinPe || CanUseSelectedOfflineBcd();
         _resetSecurityPolicyButton.Enabled = IsCurrentWindowsSelected();
+        _restartRecoveryButton.Enabled = !_session.IsWinPe;
         UpdateAccessibilityButtonState();
         UpdateCmdLineButtonState();
         UpdateSafeModeState();
@@ -250,10 +256,10 @@ public sealed class AdditionalFunctionsForm : Form
         AddActionButton(securityPage, _verifySignaturesButton, 1, 1);
         AddActionButton(securityPage, _bootCheckButton, 0, 2);
         AddActionButton(securityPage, _bootRepairButton, 1, 2);
-        AddActionButton(securityPage, _bcdCheckButton, 0, 3);
-        AddActionButton(securityPage, _eventLogButton, 1, 3);
-        AddActionButton(securityPage, _bsodAnalyzerButton, 0, 4);
-        AddActionButton(securityPage, _exportReportButton, 1, 4);
+        AddActionButton(securityPage, _bootDiagnosticsButton, 0, 3, columnSpan: 2);
+        AddActionButton(securityPage, _eventLogButton, 0, 4);
+        AddActionButton(securityPage, _bsodAnalyzerButton, 1, 4);
+        AddActionButton(securityPage, _exportReportButton, 0, 5, columnSpan: 2);
         AddTab(tabs, "Безопасность", securityPage);
 
         var accessPage = CreateActionPage();
@@ -269,7 +275,8 @@ public sealed class AdditionalFunctionsForm : Form
         AddActionButton(powerPage, _restartButton, 0, 0);
         AddActionButton(powerPage, _shutdownButton, 1, 0);
         AddActionButton(powerPage, _restartSafeModeButton, 0, 1, columnSpan: 2);
-        AddActionControl(powerPage, _safeModeCheckBox, 0, 2, columnSpan: 2);
+        AddActionButton(powerPage, _restartRecoveryButton, 0, 2, columnSpan: 2);
+        AddActionControl(powerPage, _safeModeCheckBox, 0, 3, columnSpan: 2);
         AddTab(tabs, "Питание", powerPage);
 
         content.Controls.Add(tabs, 0, 0);
@@ -935,8 +942,8 @@ public sealed class AdditionalFunctionsForm : Form
         var arguments = IsCurrentWindowsSelected()
             ? $"/scanfile={QuoteArgument(logonUiPath)}"
             : $"/scanfile={QuoteArgument(logonUiPath)} /offbootdir={QuoteArgument(EnsureTrailingSlash(_session.DriveRoot))} /offwindir={QuoteArgument(_session.WindowsPath!)}";
-        StartVisibleCmdCommand("iUnlocker LogonUI", $"sfc.exe {arguments}");
-        SetStatus("Точечное восстановление LogonUI запущено в окне cmd.exe.");
+        StartSystemCommands("iUnlocker: восстановление LogonUI", new SystemCommand("sfc.exe", arguments));
+        SetStatus("Точечное восстановление LogonUI запущено в окне iUnlocker.");
     }
 
     private void RunSfcScan()
@@ -967,8 +974,8 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            StartVisibleCmdCommand("iUnlocker SFC", $"sfc.exe {arguments}");
-            SetStatus($"SFC запущен в окне cmd.exe: sfc.exe {arguments}");
+            StartSystemCommands("iUnlocker: SFC", new SystemCommand("sfc.exe", arguments));
+            SetStatus($"SFC запущен в окне iUnlocker: sfc.exe {arguments}");
         }
         catch (Exception ex)
         {
@@ -1032,7 +1039,7 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            StartVisibleCmdCommand("iUnlocker SFC file", $"sfc.exe {arguments}");
+            StartSystemCommands("iUnlocker: проверка файла", new SystemCommand("sfc.exe", arguments));
             SetStatus($"Точечная проверка SFC запущена: {dialog.FileName}");
         }
         catch (Exception ex)
@@ -1069,8 +1076,8 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            StartVisibleCmdCommand($"iUnlocker DISM {mode}", $"dism.exe {arguments}");
-            SetStatus($"DISM {mode} запущен в окне cmd.exe.");
+            StartSystemCommands($"iUnlocker: DISM {mode}", new SystemCommand("dism.exe", arguments));
+            SetStatus($"DISM {mode} запущен в окне iUnlocker.");
         }
         catch (Exception ex)
         {
@@ -1102,8 +1109,8 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            StartVisibleCmdCommand("iUnlocker CHKDSK", $"chkdsk {arguments}");
-            SetStatus($"CHKDSK запущен в окне cmd.exe: chkdsk {arguments}");
+            StartSystemCommands("iUnlocker: CHKDSK", new SystemCommand("chkdsk.exe", arguments));
+            SetStatus($"CHKDSK запущен в окне iUnlocker: chkdsk {arguments}");
         }
         catch (Exception ex)
         {
@@ -1126,7 +1133,6 @@ public sealed class AdditionalFunctionsForm : Form
         }
 
         var store = FindSelectedBcdStore()!;
-        var command = $@"bcdedit /store ""{store}"" /enum all & echo. & bootrec /scanos";
         if (MessageBox.Show(
                 this,
                 $"Запустить проверку загрузчика выбранной Windows?\r\n\r\nBCD: {store}\r\n\r\nБудут выполнены bcdedit /store ... /enum all и bootrec /scanos.",
@@ -1139,8 +1145,11 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            StartVisibleCmdCommand("iUnlocker Boot Check", command);
-            SetStatus("Проверка загрузчика запущена в окне cmd.exe.");
+            StartSystemCommands(
+                "iUnlocker: проверка загрузчика",
+                new SystemCommand("bcdedit.exe", $@"/store ""{store}"" /enum all"),
+                new SystemCommand("bootrec.exe", "/scanos"));
+            SetStatus("Проверка загрузчика запущена в окне iUnlocker.");
         }
         catch (Exception ex)
         {
@@ -1149,16 +1158,16 @@ public sealed class AdditionalFunctionsForm : Form
         }
     }
 
-    private void OpenBcdCheck()
+    private void OpenBootDiagnostics()
     {
         try
         {
-            var form = new BcdCheckForm(_session);
+            var form = new BootDiagnosticsForm(_session);
             form.Show(this);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Проверка BCD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, ex.Message, "Диагностика загрузки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -1277,8 +1286,8 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            StartVisibleCmdCommand("iUnlocker LogonUI", $"sfc.exe {arguments}");
-            SetStatus("Восстановление LogonUI запущено в окне cmd.exe.");
+            StartSystemCommands("iUnlocker: восстановление LogonUI", new SystemCommand("sfc.exe", arguments));
+            SetStatus("Восстановление LogonUI запущено в окне iUnlocker.");
         }
         catch (Exception ex)
         {
@@ -1307,9 +1316,7 @@ public sealed class AdditionalFunctionsForm : Form
         {
             RestoreFontRegistryDefaults();
             var (deleted, errors) = CleanSelectedFontCache();
-            var command = BuildFontSfcCommand();
-
-            StartVisibleCmdCommand("iUnlocker Fonts", command);
+            StartSystemCommands("iUnlocker: восстановление шрифтов", BuildFontSfcCommands());
             SetStatus($"Восстановление шрифтов запущено. Кэш очищен: {deleted}, ошибок: {errors}.");
         }
         catch (Exception ex)
@@ -1319,17 +1326,17 @@ public sealed class AdditionalFunctionsForm : Form
         }
     }
 
-    private string BuildFontSfcCommand()
+    private SystemCommand[] BuildFontSfcCommands()
     {
         var suffix = IsCurrentWindowsSelected()
             ? string.Empty
             : $" /offbootdir={QuoteArgument(EnsureTrailingSlash(_session.DriveRoot))} /offwindir={QuoteArgument(_session.WindowsPath!)}";
 
-        return string.Join(" & ", GetSystemFontFiles().Select(file =>
+        return GetSystemFontFiles().Select(file =>
         {
             var path = Path.Combine(_session.WindowsPath!, "Fonts", file);
-            return $"sfc.exe /scanfile={QuoteArgument(path)}{suffix}";
-        }));
+            return new SystemCommand("sfc.exe", $"/scanfile={QuoteArgument(path)}{suffix}");
+        }).ToArray();
     }
 
     private static IReadOnlyList<string> GetSystemFontFiles()
@@ -1573,7 +1580,9 @@ public sealed class AdditionalFunctionsForm : Form
             return;
         }
 
-        const string command = @"secedit /configure /cfg %windir%\inf\defltbase.inf /db %temp%\iUnlocker_secedit.sdb /verbose";
+        var cfgPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "inf", "defltbase.inf");
+        var databasePath = Path.Combine(Path.GetTempPath(), "iUnlocker_secedit.sdb");
+        var arguments = $"/configure /cfg {QuoteArgument(cfgPath)} /db {QuoteArgument(databasePath)} /verbose";
         if (MessageBox.Show(this, "Сбросить политики безопасности текущей Windows к базовым значениям?\r\n\r\nЭто может изменить локальные политики безопасности.", "Сброс политик безопасности", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
         {
             return;
@@ -1581,8 +1590,8 @@ public sealed class AdditionalFunctionsForm : Form
 
         try
         {
-            StartVisibleCmdCommand("iUnlocker Security Policy", command);
-            SetStatus("Сброс политик безопасности запущен в окне cmd.exe.");
+            StartSystemCommands("iUnlocker: сброс политик безопасности", new SystemCommand("secedit.exe", arguments));
+            SetStatus("Сброс политик безопасности запущен в окне iUnlocker.");
         }
         catch (Exception ex)
         {
@@ -1603,16 +1612,17 @@ public sealed class AdditionalFunctionsForm : Form
             return;
         }
 
-        var command = GetDisableTestModeCommand();
-        if (MessageBox.Show(this, $"Отключить тестовый режим загрузчика?\r\n\r\n{command}", "Отключить тестовый режим", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        var commands = GetDisableTestModeCommands();
+        var commandText = string.Join(Environment.NewLine, commands.Select(command => $"{command.FileName} {command.Arguments}"));
+        if (MessageBox.Show(this, $"Отключить тестовый режим загрузчика?\r\n\r\n{commandText}", "Отключить тестовый режим", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
         {
             return;
         }
 
         try
         {
-            StartVisibleCmdCommand("iUnlocker Test Mode", command);
-            SetStatus("Команда отключения тестового режима запущена в cmd.exe.");
+            StartSystemCommands("iUnlocker: отключение тестового режима", commands);
+            SetStatus("Команда отключения тестового режима запущена в iUnlocker.");
         }
         catch (Exception ex)
         {
@@ -1620,18 +1630,25 @@ public sealed class AdditionalFunctionsForm : Form
         }
     }
 
-    private string GetDisableTestModeCommand()
+    private SystemCommand[] GetDisableTestModeCommands()
     {
         if (_session.IsWinPe)
         {
             var bcdStore = FindSelectedBcdStore();
             if (!string.IsNullOrWhiteSpace(bcdStore))
             {
-                return $@"bcdedit /store ""{bcdStore}"" /set {{default}} testsigning off & bcdedit /store ""{bcdStore}"" /set {{default}} nointegritychecks off";
+                var prefix = $@"/store ""{bcdStore}"" /set {{default}}";
+                return [
+                    new SystemCommand("bcdedit.exe", $"{prefix} testsigning off"),
+                    new SystemCommand("bcdedit.exe", $"{prefix} nointegritychecks off"),
+                ];
             }
         }
 
-        return "bcdedit /set testsigning off & bcdedit /set nointegritychecks off";
+        return [
+            new SystemCommand("bcdedit.exe", "/set testsigning off"),
+            new SystemCommand("bcdedit.exe", "/set nointegritychecks off"),
+        ];
     }
 
     private string? FindSelectedBcdStore()
@@ -1703,21 +1720,9 @@ public sealed class AdditionalFunctionsForm : Form
         key.SetValue("EnableInstallerDetection", 1, RegistryValueKind.DWord);
     }
 
-    private static void StartVisibleCmdCommand(string title, string command)
+    private void StartSystemCommands(string title, params SystemCommand[] commands)
     {
-        var cmdArguments = $"/k \"title {title} & {command} & echo. & pause\"";
-        using var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-            Arguments = cmdArguments,
-            UseShellExecute = true,
-            CreateNoWindow = false,
-        });
-
-        if (process is null)
-        {
-            throw new InvalidOperationException("Не удалось запустить процесс.");
-        }
+        SystemCommandRunner.Show(this, title, commands);
     }
 
     private static string EnsureTrailingSlash(string path)
@@ -1933,6 +1938,28 @@ public sealed class AdditionalFunctionsForm : Form
         {
             StartPowerAction(reboot: true);
         }
+    }
+
+    private void RestartToRecoveryEnvironment()
+    {
+        if (_session.IsWinPe)
+        {
+            MessageBox.Show(this, "Среда восстановления доступна только из запущенной Windows.", "Среда восстановления", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (MessageBox.Show(
+                this,
+                "Перезагрузить компьютер в среду восстановления Windows?\r\n\r\nПосле перезагрузки откроется меню дополнительных вариантов загрузки.",
+                "Среда восстановления",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        StartShutdownExe("/r /o /t 0");
+        SetStatus("Команда перезагрузки в среду восстановления отправлена.");
     }
 
     private void ShutdownComputer()

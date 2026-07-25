@@ -20,6 +20,7 @@ public sealed class FileExplorerForm : Form
     private readonly ToolStripMenuItem _cutMenuItem = new("Вырезать");
     private readonly ToolStripMenuItem _copyMenuItem = new("Копировать");
     private readonly ToolStripMenuItem _createShortcutMenuItem = new("Создать ярлык");
+    private readonly ToolStripMenuItem _findLocksMenuItem = new("Кто блокирует файл");
     private readonly ToolStripMenuItem _quarantineMenuItem = new("Добавить в карантин");
     private readonly ToolStripMenuItem _deleteMenuItem = new("Удалить");
     private readonly ToolStripMenuItem _renameMenuItem = new("Переименовать");
@@ -128,7 +129,7 @@ public sealed class FileExplorerForm : Form
         _fileList.FullRowSelect = true;
         _fileList.GridLines = true;
         _fileList.HideSelection = false;
-        _fileList.MultiSelect = false;
+        _fileList.MultiSelect = true;
         _fileList.Columns.Add("Имя", 320);
         _fileList.Columns.Add("Тип", 140);
         _fileList.Columns.Add("Размер", 110, HorizontalAlignment.Right);
@@ -157,16 +158,19 @@ public sealed class FileExplorerForm : Form
         _fileMenu.Renderer = new DarkContextMenuRenderer();
         _fileMenu.Opening += (_, e) =>
         {
-            var hasSelection = GetSelectedListItem() is not null;
+            var selectedItems = GetSelectedListItems();
+            var hasSelection = selectedItems.Count > 0;
             foreach (ToolStripItem item in _fileMenu.Items)
             {
                 item.Enabled = hasSelection || item is ToolStripSeparator;
             }
 
-            if (GetSelectedListItem() is { IsDirectory: true })
+            if (selectedItems.Any(item => item.IsDirectory))
             {
                 _quarantineMenuItem.Enabled = false;
             }
+
+            _findLocksMenuItem.Enabled = selectedItems.Count == 1 && !selectedItems[0].IsDirectory;
 
             UiTheme.HideUnavailableContextMenuItems(_fileMenu);
         };
@@ -177,6 +181,7 @@ public sealed class FileExplorerForm : Form
         _cutMenuItem.Click += (_, _) => SetSelectedItemClipboard(cut: true);
         _copyMenuItem.Click += (_, _) => SetSelectedItemClipboard(cut: false);
         _createShortcutMenuItem.Click += (_, _) => CreateSelectedShortcut();
+        _findLocksMenuItem.Click += (_, _) => OpenFileLocks();
         _quarantineMenuItem.Click += (_, _) => QuarantineSelectedItem();
         _deleteMenuItem.Click += (_, _) => DeleteSelectedItem();
         _renameMenuItem.Click += (_, _) => RenameSelectedItem();
@@ -192,6 +197,7 @@ public sealed class FileExplorerForm : Form
             _copyMenuItem,
             new ToolStripSeparator(),
             _createShortcutMenuItem,
+            _findLocksMenuItem,
             _quarantineMenuItem,
             _deleteMenuItem,
             _renameMenuItem,
@@ -200,6 +206,18 @@ public sealed class FileExplorerForm : Form
         });
 
         _fileList.ContextMenuStrip = _fileMenu;
+    }
+
+    private void OpenFileLocks()
+    {
+        var item = GetSelectedListItem();
+        if (item is null || item.IsDirectory)
+        {
+            return;
+        }
+
+        var form = new FileLockForm(item.Path);
+        form.Show(this);
     }
 
     private void SetupImages()
@@ -307,7 +325,12 @@ public sealed class FileExplorerForm : Form
             return;
         }
 
-        item.Selected = true;
+        if (!item.Selected)
+        {
+            _fileList.SelectedItems.Clear();
+            item.Selected = true;
+        }
+
         item.Focused = true;
     }
 
@@ -661,6 +684,16 @@ public sealed class FileExplorerForm : Form
             : _fileList.SelectedItems[0].Tag as FileSystemListItem;
     }
 
+    private IReadOnlyList<FileSystemListItem> GetSelectedListItems()
+    {
+        return _fileList.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(item => item.Tag as FileSystemListItem)
+            .Where(item => item is not null)
+            .Cast<FileSystemListItem>()
+            .ToList();
+    }
+
     private void OpenSelectedItem()
     {
         var item = GetSelectedListItem();
@@ -719,30 +752,31 @@ public sealed class FileExplorerForm : Form
 
     private void CopySelectedPath()
     {
-        var item = GetSelectedListItem();
-        if (item is null)
+        var items = GetSelectedListItems();
+        if (items.Count == 0)
         {
             return;
         }
 
-        Clipboard.SetText($"\"{item.Path}\"");
+        Clipboard.SetText(string.Join(Environment.NewLine, items.Select(item => $"\"{item.Path}\"")));
         _statusLabel.Text = "Путь скопирован.";
     }
 
     private void SetSelectedItemClipboard(bool cut)
     {
-        var item = GetSelectedListItem();
-        if (item is null)
+        var items = GetSelectedListItems();
+        if (items.Count == 0)
         {
             return;
         }
 
-        var paths = new StringCollection { item.Path };
+        var paths = new StringCollection();
+        paths.AddRange(items.Select(item => item.Path).ToArray());
         var data = new DataObject();
         data.SetFileDropList(paths);
         data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes(cut ? 2 : 5)));
         Clipboard.SetDataObject(data, copy: true);
-        _statusLabel.Text = cut ? "Элемент помещён в буфер для вырезания." : "Элемент скопирован в буфер.";
+        _statusLabel.Text = cut ? "Элементы помещены в буфер для вырезания." : "Элементы скопированы в буфер.";
     }
 
     private void CreateSelectedShortcut()
@@ -774,15 +808,17 @@ public sealed class FileExplorerForm : Form
 
     private void DeleteSelectedItem()
     {
-        var item = GetSelectedListItem();
-        if (item is null)
+        var items = GetSelectedListItems();
+        if (items.Count == 0)
         {
             return;
         }
 
         var result = MessageBox.Show(
             this,
-            $"Удалить \"{Path.GetFileName(item.Path)}\"?",
+            items.Count == 1
+                ? $"Удалить \"{Path.GetFileName(items[0].Path)}\"?"
+                : $"Удалить выбранные элементы: {items.Count}?",
             "Удаление",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -794,41 +830,46 @@ public sealed class FileExplorerForm : Form
 
         try
         {
-            if (item.IsDirectory)
+            foreach (var item in items)
             {
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
-                    item.Path,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-            }
-            else
-            {
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
-                    item.Path,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                if (item.IsDirectory)
+                {
+                    Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+                        item.Path,
+                        Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                        Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                }
+                else
+                {
+                    Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                        item.Path,
+                        Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                        Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                }
             }
 
             RefreshCurrent();
-            _statusLabel.Text = "Элемент удалён в корзину.";
+            _statusLabel.Text = items.Count == 1 ? "Элемент удалён в корзину." : $"Элементов удалено в корзину: {items.Count}.";
         }
         catch (Exception ex)
         {
-            ShowPathError(item.Path, ex);
+            ShowPathError(items[0].Path, ex);
         }
     }
 
     private void QuarantineSelectedItem()
     {
-        var item = GetSelectedListItem();
-        if (item is null || item.IsDirectory)
+        var items = GetSelectedListItems().Where(item => !item.IsDirectory).ToList();
+        if (items.Count == 0)
         {
             return;
         }
 
         var result = MessageBox.Show(
             this,
-            $"Добавить файл в карантин?\r\n\r\n{item.Path}",
+            items.Count == 1
+                ? $"Добавить файл в карантин?\r\n\r\n{items[0].Path}"
+                : $"Добавить выбранные файлы в карантин: {items.Count}?",
             "Карантин",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -840,13 +881,17 @@ public sealed class FileExplorerForm : Form
 
         try
         {
-            QuarantineManager.QuarantineFile(item.Path, "Добавлено вручную из проводника iUnlocker", "Проводник");
+            foreach (var item in items)
+            {
+                QuarantineManager.QuarantineFile(item.Path, "Добавлено вручную из проводника iUnlocker", "Проводник");
+            }
+
             RefreshCurrent();
-            _statusLabel.Text = "Файл добавлен в карантин.";
+            _statusLabel.Text = items.Count == 1 ? "Файл добавлен в карантин." : $"В карантин добавлено файлов: {items.Count}.";
         }
         catch (Exception ex)
         {
-            ShowPathError(item.Path, ex);
+            ShowPathError(items[0].Path, ex);
         }
     }
 

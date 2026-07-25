@@ -147,6 +147,35 @@ public sealed class RegistryEditorForm : Form
         _keyTree.AfterSelect += (_, _) => LoadValues();
         UiTheme.StyleTree(_keyTree);
 
+        var keyMenu = new ContextMenuStrip();
+        UiTheme.StyleContextMenu(keyMenu);
+        var createKeyItem = new ToolStripMenuItem("Создать раздел...");
+        createKeyItem.Click += (_, _) => CreateSubKey();
+        var createValueItem = new ToolStripMenuItem("Создать параметр");
+        AddCreateValueMenuItem(createValueItem, "Строковый параметр", RegistryValueKind.String);
+        AddCreateValueMenuItem(createValueItem, "Расширяемый строковый параметр", RegistryValueKind.ExpandString);
+        AddCreateValueMenuItem(createValueItem, "DWORD (32 бита)", RegistryValueKind.DWord);
+        AddCreateValueMenuItem(createValueItem, "QWORD (64 бита)", RegistryValueKind.QWord);
+        AddCreateValueMenuItem(createValueItem, "Мультистроковый параметр", RegistryValueKind.MultiString);
+        AddCreateValueMenuItem(createValueItem, "Двоичный параметр", RegistryValueKind.Binary);
+        keyMenu.Items.Add(createKeyItem);
+        keyMenu.Items.Add(createValueItem);
+        keyMenu.Opening += (_, _) =>
+        {
+            var hasKey = GetSelectedKeyContext() is not null;
+            createKeyItem.Enabled = hasKey;
+            createValueItem.Enabled = hasKey;
+            UiTheme.HideUnavailableContextMenuItems(keyMenu);
+        };
+        _keyTree.NodeMouseClick += (_, args) =>
+        {
+            if (args.Button == MouseButtons.Right)
+            {
+                _keyTree.SelectedNode = args.Node;
+            }
+        };
+        _keyTree.ContextMenuStrip = keyMenu;
+
         _valueList.Dock = DockStyle.Fill;
         _valueList.View = View.Details;
         _valueList.FullRowSelect = true;
@@ -930,6 +959,96 @@ public sealed class RegistryEditorForm : Form
             ?? throw new InvalidOperationException("Ключ недоступен для записи.");
         key.DeleteValue(valueContext.ValueName, throwOnMissingValue: true);
         LoadValues();
+    }
+
+    private RegistryNodeContext? GetSelectedKeyContext()
+    {
+        return _keyTree.SelectedNode?.Tag as RegistryNodeContext;
+    }
+
+    private void AddCreateValueMenuItem(ToolStripMenuItem parent, string text, RegistryValueKind kind)
+    {
+        parent.DropDownItems.Add(text, null, (_, _) => CreateRegistryValue(kind));
+    }
+
+    private void CreateSubKey()
+    {
+        var context = GetSelectedKeyContext();
+        if (context is null)
+        {
+            return;
+        }
+
+        using var dialog = new TextEditForm("Создать раздел", "Имя нового раздела", string.Empty);
+        if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.EditedText))
+        {
+            return;
+        }
+
+        if (dialog.EditedText.Contains('\\'))
+        {
+            MessageBox.Show(this, "Имя раздела не должно содержать символ \\.", "Реестр", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            using var key = OpenKey(context, writable: true)
+                ?? throw new InvalidOperationException("Ключ недоступен для записи.");
+            key.CreateSubKey(dialog.EditedText, writable: true)?.Dispose();
+            RefreshSelectedKeyNode();
+            _statusLabel.Text = $"Создан раздел: {dialog.EditedText}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Реестр", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void CreateRegistryValue(RegistryValueKind kind)
+    {
+        var context = GetSelectedKeyContext();
+        if (context is null)
+        {
+            return;
+        }
+
+        using var nameDialog = new TextEditForm("Создать параметр", "Имя параметра", string.Empty);
+        if (nameDialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(nameDialog.EditedText))
+        {
+            return;
+        }
+
+        using var valueDialog = new TextEditForm("Создать параметр", $"Значение ({FormatRegistryValueKind(kind)})", string.Empty);
+        if (valueDialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            using var key = OpenKey(context, writable: true)
+                ?? throw new InvalidOperationException("Ключ недоступен для записи.");
+            key.SetValue(nameDialog.EditedText, ConvertRegistryValue(valueDialog.EditedText, kind), kind);
+            LoadValues();
+            _statusLabel.Text = $"Создан параметр: {nameDialog.EditedText}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Реестр", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void RefreshSelectedKeyNode()
+    {
+        if (_keyTree.SelectedNode?.Tag is not RegistryNodeContext context)
+        {
+            return;
+        }
+
+        _keyTree.SelectedNode.Nodes.Clear();
+        LoadChildKeys(_keyTree.SelectedNode, context);
+        _keyTree.SelectedNode.Expand();
     }
 
     private static RegistryKey? OpenKey(RegistryNodeContext context, bool writable)

@@ -9,10 +9,10 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>iUnlocker</AssemblyName>
     <TargetName>iUnlocker</TargetName>
-    <Version>1.0.2.0</Version>
-    <FileVersion>1.0.2.0</FileVersion>
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <InformationalVersion>1.0.2.0-beta</InformationalVersion>
+    <Version>1.0.3</Version>
+    <FileVersion>1.0.3</FileVersion>
+    <AssemblyVersion>1.0.3</AssemblyVersion>
+    <InformationalVersion>1.0.3</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <AssemblyTitle>iUnlocker</AssemblyTitle>
     <Product>iUnlocker</Product>

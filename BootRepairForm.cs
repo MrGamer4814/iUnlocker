@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace IUnlocker;
 
 public sealed class BootRepairForm : Form
@@ -181,7 +179,7 @@ public sealed class BootRepairForm : Form
     {
         _commandBox.Text = GetSelectedCandidate() is not { } candidate || string.IsNullOrWhiteSpace(_session.WindowsPath)
             ? string.Empty
-            : BuildCommand(candidate.Root, includeBackup: true);
+            : $"iUnlocker создаст backup BCD перед запуском.{Environment.NewLine}bcdboot.exe {BuildArguments(candidate.Root)}";
     }
 
     private void RunRepair()
@@ -202,8 +200,8 @@ public sealed class BootRepairForm : Form
         try
         {
             BackupBcd(candidate.Root);
-            StartVisibleCmdCommand("iUnlocker Boot Repair", BuildCommand(candidate.Root, includeBackup: false));
-            _statusLabel.Text = "Восстановление загрузчика запущено в cmd.exe.";
+            SystemCommandRunner.Show(this, "iUnlocker: восстановление загрузчика", new SystemCommand("bcdboot.exe", BuildArguments(candidate.Root)));
+            _statusLabel.Text = "Восстановление загрузчика запущено в окне iUnlocker.";
         }
         catch (Exception ex)
         {
@@ -211,11 +209,10 @@ public sealed class BootRepairForm : Form
         }
     }
 
-    private string BuildCommand(string efiRoot, bool includeBackup)
+    private string BuildArguments(string efiRoot)
     {
         var firmware = Convert.ToString(_firmwareBox.SelectedItem) ?? "UEFI";
-        var backupText = includeBackup ? "REM iUnlocker создаст backup BCD перед запуском\r\n" : string.Empty;
-        return backupText + $@"bcdboot ""{_session.WindowsPath}"" /s {efiRoot.TrimEnd('\\')} /f {firmware}";
+        return $@"""{_session.WindowsPath}"" /s {efiRoot.TrimEnd('\\')} /f {firmware}";
     }
 
     private void BackupBcd(string efiRoot)
@@ -240,22 +237,6 @@ public sealed class BootRepairForm : Form
     private EfiDriveCandidate? GetSelectedCandidate()
     {
         return _efiDriveBox.SelectedItem as EfiDriveCandidate;
-    }
-
-    private static void StartVisibleCmdCommand(string title, string command)
-    {
-        using var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
-            Arguments = $"/k \"title {title} & {command} & echo. & pause\"",
-            UseShellExecute = true,
-            CreateNoWindow = false,
-        });
-
-        if (process is null)
-        {
-            throw new InvalidOperationException("Не удалось запустить cmd.exe.");
-        }
     }
 
     private sealed record EfiDriveCandidate(string Root, string Display)

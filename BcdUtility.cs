@@ -44,6 +44,17 @@ internal static class BcdUtility
                 }
             }
         }
+
+        foreach (var volumeRoot in VolumeUtility.EnumerateVolumeRoots())
+        {
+            foreach (var candidate in GetPrimaryBcdCandidates(volumeRoot))
+            {
+                if (seen.Add(candidate))
+                {
+                    yield return candidate;
+                }
+            }
+        }
     }
 
     private static IEnumerable<string> GetPrimaryBcdCandidates(string driveRoot)
